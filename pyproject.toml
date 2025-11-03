@@ -69,7 +69,8 @@ docs = [
 testing = [
     "setuptools",
     "pytest",
-    "pytest-cov"
+    "pytest-cov",
+    "riverine[echo]"
 ]
 echo = [
     "kithairon >= 0.2.0",
@@ -97,6 +98,7 @@ ignore_missing_imports = true
 dependencies = [
 "pytest",
 "pytest-cov",
+"riverine[echo]",
 ]
 
 [tool.hatch.envs.hatch-test.overrides]
