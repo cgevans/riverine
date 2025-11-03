@@ -6,6 +6,7 @@ from .actions import (
     MultiFixedConcentration,
     MultiFixedVolume,
     ToConcentration,
+    FillToVolume,
 )
 from .components import AbstractComponent, Component, Strand
 from .experiments import Experiment
@@ -31,6 +32,7 @@ __all__ = [
     "FixedConcentration",
     "EqualConcentration",
     "ToConcentration",
+    "FillToVolume",
     "MultiFixedVolume",
     "MultiFixedConcentration",
     "Mix",

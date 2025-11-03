@@ -38,6 +38,14 @@ from .units import (
 
 from .util import maybe_cache_once, gen_random_hash
 
+from enum import Enum
+
+class MixVolumeDep(Enum):
+    INDEPENDENT = "independent"
+    DEPENDS = "depends"
+    DETERMINES = "determines"
+
+
 T = TypeVar("T")
 
 
@@ -49,6 +57,21 @@ class AbstractAction(metaclass=ABCMeta):
     @property
     @abstractmethod
     def name(self) -> str:  # pragma: no cover
+        ...
+
+    @abstractmethod
+    def mix_volume_effect(self, _cache_key=None) -> (MixVolumeDep, DecimalQuantity):  # pragma: no cover
+        """The effect of the action on the mix volume.
+
+        Returns
+        -------
+        MixVolumeDep
+            How the mix volume affects the action.
+        DecimalQuantity
+            If MixVolumeDep is DETERMINES, the total mix volume that the action causes.
+            If MixVolumeDep is DEPENDS, NAN.
+            If MixVolumeDep is INDEPENDENT, the total volume that the action adds.
+        """
         ...
 
     def _get_name(self, _cache_key=None) -> str:
@@ -183,6 +206,9 @@ class ActionWithComponents(AbstractAction):
     @property
     def name(self) -> str:
         return ", ".join(c.name for c in self.components)
+
+    def mix_volume_effect(self, _cache_key=None) -> (MixVolumeDep, DecimalQuantity):
+        raise NotImplementedError
 
     def __eq__(self, other: object) -> bool:
         if type(self) != type(other):
@@ -547,6 +573,9 @@ class FixedVolume(ActionWithComponents):
 
         return ml
 
+    def mix_volume_effect(self, _cache_key=None) -> (MixVolumeDep, DecimalQuantity):
+        return (MixVolumeDep.INDEPENDENT, self.tx_volume(_cache_key=_cache_key))
+
 
 @attrs.define(init=False, eq=False)
 class EqualConcentration(FixedVolume):
@@ -704,6 +733,8 @@ class EqualConcentration(FixedVolume):
                 ml.append(MixLine([self.method[1]], None, None, fv))
         return ml
 
+    def mix_volume_effect(self, _cache_key=None) -> (MixVolumeDep, DecimalQuantity):
+        return (MixVolumeDep.INDEPENDENT, self.tx_volume(_cache_key=_cache_key))
 
 @attrs.define(eq=False)
 class FixedConcentration(ActionWithComponents):
@@ -842,6 +873,10 @@ class FixedConcentration(ActionWithComponents):
             return super().name
         else:
             return self.set_name
+
+    def mix_volume_effect(self, _cache_key=None) -> (MixVolumeDep, DecimalQuantity):
+        return (MixVolumeDep.DEPENDS, NAN_VOL)
+
 
 
 @attrs.define(eq=False)
@@ -982,9 +1017,104 @@ class ToConcentration(ActionWithComponents):
 
         return ml
 
+    def mix_volume_effect(self, _cache_key=None) -> (MixVolumeDep, DecimalQuantity):
+        return (MixVolumeDep.DEPENDS, NAN_VOL)
+
+
 
 MultiFixedConcentration = FixedConcentration
 MultiFixedVolume = FixedVolume
+
+
+@attrs.define(eq=False)
+class FillToVolume(ActionWithComponents):
+    target_total_volume: DecimalQuantity = attrs.field(
+        converter=_parse_vol_optional, default=None
+    )
+
+    @maybe_cache_once
+    def dest_concentrations(
+        self,
+        mix_vol: DecimalQuantity = NAN_VOL,
+        actions: Sequence[AbstractAction] = (),
+        _cache_key=None,
+    ) -> list[DecimalQuantity]:
+        return [
+            x * y
+            for x, y in zip(
+                self._get_source_concentrations(_cache_key=_cache_key),
+                _ratio(
+                    self.each_volumes(mix_vol, actions, _cache_key=_cache_key), mix_vol
+                ),
+            )
+        ]
+
+    @maybe_cache_once
+    def each_volumes(
+        self,
+        mix_volume: DecimalQuantity = NAN_VOL,
+        actions: Sequence[AbstractAction] = (),
+        _cache_key=None,
+    ) -> list[DecimalQuantity]:
+        _cache_key = gen_random_hash() if _cache_key is None else _cache_key
+        othervol = sum(
+            [
+                a.tx_volume(mix_volume, actions, _cache_key=_cache_key)
+                for a in actions
+                if a is not self
+            ]
+        )
+
+        if len(self.components) > 1:
+            raise NotImplementedError(
+                "FillToVolume with multiple components is not implemented."
+            )
+
+        if math.isnan(self.target_total_volume.m):
+            tvol = mix_volume
+        else:
+            tvol = self.target_total_volume
+
+        maybe_vol = (tvol - othervol)
+        if math.isnan(maybe_vol.m):
+            return [NAN_VOL] * len(self.components)
+
+        return [
+            maybe_vol
+        ]
+
+    @maybe_cache_once
+    def _mixlines(
+        self,
+        tablefmt: str | TableFormat,
+        mix_vol: DecimalQuantity,
+        actions: Sequence[AbstractAction] = (),
+        _cache_key=None,
+    ) -> list[MixLine]:
+        dconcs = self.dest_concentrations(mix_vol, actions, _cache_key=_cache_key)
+        eavols = self.each_volumes(mix_vol, actions, _cache_key=_cache_key)
+        return [
+            MixLine(
+                [comp.printed_name(tablefmt=tablefmt)],
+                comp.concentration
+                if not math.isnan(comp.concentration.m)
+                else None,  # FIXME: should be better handled
+                dc if not math.isnan(dc.m) else None,
+                ev,
+                number=self.number,
+                plate=comp.plate if comp.plate else "",
+                wells=comp._well_list,
+            )
+            for dc, ev, comp in zip(
+                dconcs,
+                eavols,
+                self.components,
+            )
+        ]
+
+    def mix_volume_effect(self, _cache_key=None) -> (MixVolumeDep, DecimalQuantity):
+        return (MixVolumeDep.DETERMINES, self.target_total_volume)
+
 
 for c in [FixedConcentration, FixedVolume, EqualConcentration, ToConcentration]:
     _STRUCTURE_CLASSES[c.__name__] = c

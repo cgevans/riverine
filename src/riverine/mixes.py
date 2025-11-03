@@ -28,8 +28,10 @@ from .actions import (
     AbstractAction,  # Fixme: should not need special cases
     FixedConcentration,
     FixedVolume,
+    MixVolumeDep,
+    FillToVolume,
 )
-from .components import AbstractComponent, Component, _empty_components
+from .components import AbstractComponent, Component
 from .dictstructure import _STRUCTURE_CLASSES, _structure, _unstructure
 from .locations import PlateType, WellPos, _parse_wellpos_optional
 from .logging import log
@@ -147,7 +149,7 @@ def remove_buffer_mixline_if_absent(mixlines: list[MixLine], buffer_name: str) -
         del mixlines[idx_to_remove]
 
 
-@attrs.define(eq=False)
+@attrs.define(eq=False, init=False)
 class Mix(AbstractComponent):
     """Class denoting a Mix, a collection of source components mixed to
     some volume or concentration.
@@ -159,16 +161,9 @@ class Mix(AbstractComponent):
     name: str = ""
     test_tube_name: str | None = attrs.field(kw_only=True, default=None)
     "A short name, eg, for labelling a test tube."
-    fixed_total_volume: DecimalQuantity = attrs.field(
-        converter=_parse_vol_optional,
-        default=NAN_VOL,
-        kw_only=True,
-        on_setattr=attrs.setters.convert,
-    )
     fixed_concentration: str | DecimalQuantity | None = attrs.field(
         default=None, kw_only=True, on_setattr=attrs.setters.convert
     )
-    buffer_name: str = "Buffer"
     reference: Reference | None = None
     min_volume: DecimalQuantity = attrs.field(
         converter=_parse_vol_optional,
@@ -187,12 +182,56 @@ class Mix(AbstractComponent):
         on_setattr=attrs.setters.convert,
     )
 
+    def __init__(self, *args, **kwargs):
+        if "fixed_total_volume" in kwargs:
+            ftv = _parse_vol_optional(kwargs.pop("fixed_total_volume"))
+        else:
+            ftv = None    
+        self.__attrs_init__(*args, **kwargs)
+        if ftv is not None:
+            if not any(action.mix_volume_effect()[0] == MixVolumeDep.DETERMINES for action in self.actions):
+                self.actions.append(FillToVolume("Buffer", ftv))
+            else:
+                raise ValueError("If fixed_total_volume is specified, it must be the only action that determines the total volume.")
+
     @property
     def is_mix(self) -> bool:
         return True
 
+    @property
+    def fixed_total_volume(self) -> DecimalQuantity:
+        for action in self.actions:
+            if action.mix_volume_effect()[0] == MixVolumeDep.DETERMINES:
+                return action.mix_volume_effect()[1]
+        return NAN_VOL
+
+    @fixed_total_volume.setter
+    def fixed_total_volume(self, value: DecimalQuantity):
+        # FIXME: modify existing FillToVolume if it exists
+        for action in self.actions:
+            if action.mix_volume_effect()[0] == MixVolumeDep.DETERMINES:
+                action.target_total_volume = value # FIXME: typing weirdness
+                return
+        self.actions.append(FillToVolume("Buffer", value))
+
+
+    @property
+    def buffer_name(self) -> str:
+        for action in self.actions:
+            if isinstance(action, FillToVolume):
+                return action.name
+        return "Buffer"
+
+    @buffer_name.setter
+    def buffer_name(self, value: str):
+        for action in self.actions:
+            if action.mix_volume_effect()[0] == MixVolumeDep.DETERMINES:
+                action.components[0].name = value
+                return
+        self.actions.append(FillToVolume(value, NAN_VOL))
+
     def __eq__(self, other: object) -> bool:
-        if type(self) != type(other):
+        if type(self) is not type(other):
             return False
         for a in self.__attrs_attrs__:  # type: ignore
             a = cast("Attribute", a)
@@ -270,15 +309,15 @@ class Mix(AbstractComponent):
         ):
             return self.fixed_total_volume
         else:
-            return sum(
-                [
-                    c.tx_volume(
-                        self.fixed_total_volume or Q_(DNAN, ureg.uL), self.actions, _cache_key=_cache_key
-                    )
-                    for c in self.actions
-                ],
-                Q_("0.0", ureg.uL),
-            )
+            indep_vol = Q_("0.0", ureg.uL)
+            for effect, vol in [action.mix_volume_effect(_cache_key=_cache_key) for action in self.actions]:
+                if effect == MixVolumeDep.DETERMINES:
+                    return vol
+                elif effect == MixVolumeDep.INDEPENDENT:
+                    indep_vol += vol
+                else:
+                    indep_vol = NAN_VOL
+            return indep_vol
 
     @property
     def buffer_volume(self) -> Quantity:
@@ -435,7 +474,7 @@ class Mix(AbstractComponent):
             )
 
         tot_vol = self._get_total_volume(_cache_key=_cache_key)
-        high_vols = [(n, x) for n, x in ntx if x > tot_vol]
+        high_vols = [(n, x) for n, x in ntx if not isnan(x.m) and x > tot_vol]
         if high_vols:
             error_list.append(
                 VolumeError(
@@ -475,7 +514,7 @@ class Mix(AbstractComponent):
                 error_list.append(VolumeError(msg))
 
         # We'll check the last tx_vol first, because it is usually buffer.
-        if ntx[-1][1] < ZERO_VOL:
+        if not isnan(ntx[-1][1].m) and ntx[-1][1] < ZERO_VOL:
             error_list.append(
                 VolumeError(
                     f"Last mix component ({ntx[-1][0]}) has volume {ntx[-1][1]} < 0 µL. "
@@ -483,7 +522,7 @@ class Mix(AbstractComponent):
                 )
             )
 
-        neg_vols = [(n, x) for n, x in ntx if x < ZERO_VOL]
+        neg_vols = [(n, x) for n, x in ntx if not isnan(x.m) and x < ZERO_VOL]
         if neg_vols:
             error_list.append(
                 VolumeError(
@@ -499,6 +538,8 @@ class Mix(AbstractComponent):
             for component, volume in zip(
                 action.components, action.each_volumes(self._get_total_volume(_cache_key=_cache_key), self.actions, _cache_key=_cache_key)
             ):
+                if isnan(volume.m):
+                    continue
                 if isinstance(component, Mix):
                     if component.fixed_total_volume < volume:
                         error_list.append(
@@ -662,7 +703,6 @@ class Mix(AbstractComponent):
         well_marker: None | str | Callable[[str], str] = None,
         title_level: Literal[1, 2, 3, 4, 5, 6] = 3,
         warn_unsupported_title_format: bool = True,
-        buffer_name: str = "Buffer",
         tablefmt: str | TableFormat = "unsafehtml",
         include_plate_maps: bool = True,
     ) -> None:
@@ -727,7 +767,6 @@ class Mix(AbstractComponent):
             well_marker=well_marker,
             title_level=title_level,
             warn_unsupported_title_format=warn_unsupported_title_format,
-            buffer_name=buffer_name,
             tablefmt=tablefmt,
             include_plate_maps=include_plate_maps,
         )
@@ -765,7 +804,6 @@ class Mix(AbstractComponent):
         well_marker: None | str | Callable[[str], str] = None,
         title_level: Literal[1, 2, 3, 4, 5, 6] = 3,
         warn_unsupported_title_format: bool = True,
-        buffer_name: str = "Buffer",
         tablefmt: str | TableFormat = "pipe",
         include_plate_maps: bool = True,
     ) -> str:
@@ -825,7 +863,6 @@ class Mix(AbstractComponent):
         """
         table_str = self.table(
             raise_failed_validation=raise_failed_validation,
-            buffer_name=buffer_name,
             tablefmt=tablefmt,
         )
         plate_map_strs = []
