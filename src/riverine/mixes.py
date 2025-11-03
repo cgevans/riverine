@@ -134,20 +134,6 @@ def _maybesequence_action(
     return [object_or_sequence]
 
 
-def remove_buffer_mixline_if_absent(mixlines: list[MixLine], buffer_name: str) -> None:
-    idx_to_remove = -1
-    for idx, mixline in enumerate(mixlines):
-        if (
-            len(mixline.names) == 1
-            and mixline.names[0] == buffer_name
-            and mixline.each_tx_vol == ureg("0 uL")
-        ):
-            idx_to_remove = idx
-            break
-
-    if idx_to_remove >= 0:
-        del mixlines[idx_to_remove]
-
 
 @attrs.define(eq=False, init=False)
 class Mix(AbstractComponent):
@@ -187,10 +173,14 @@ class Mix(AbstractComponent):
             ftv = _parse_vol_optional(kwargs.pop("fixed_total_volume"))
         else:
             ftv = None    
+        if "buffer_name" in kwargs:
+            buffer_name = kwargs.pop("buffer_name")
+        else:
+            buffer_name = "Buffer"
         self.__attrs_init__(*args, **kwargs)
         if ftv is not None:
             if not any(action.mix_volume_effect()[0] == MixVolumeDep.DETERMINES for action in self.actions):
-                self.actions.append(FillToVolume("Buffer", ftv))
+                self.actions.append(FillToVolume(buffer_name, ftv))
             else:
                 raise ValueError("If fixed_total_volume is specified, it must be the only action that determines the total volume.")
 
@@ -328,11 +318,11 @@ class Mix(AbstractComponent):
 
     @maybe_cache_once
     def _get_buffer_volume(self, _cache_key=None) -> Quantity:
-        mvol = sum(
-            c.tx_volume(self._get_total_volume(_cache_key=_cache_key), self.actions, _cache_key=_cache_key)
-            for c in self.actions
-        )
-        return self._get_total_volume(_cache_key=_cache_key) - mvol
+        for action in self.actions:
+            effect, vol = action.mix_volume_effect(_cache_key=_cache_key)
+            if effect == MixVolumeDep.DETERMINES:
+                return action.tx_volume(vol, self.actions, _cache_key=_cache_key)
+        return ZERO_VOL
 
     def table(
         self,
@@ -343,7 +333,6 @@ class Mix(AbstractComponent):
         showindex="default",
         disable_numparse=False,
         colalign=None,
-        buffer_line_if_absent=False,
         _cache_key=None,
     ) -> str:
         """Generate a table describing the mix.
@@ -356,16 +345,10 @@ class Mix(AbstractComponent):
 
         validate
             Ensure volumes make sense.
-
-        buffer_line_if_absent
-            If True and the buffer volume is 0, include an explicit line for buffer anyway that says 0 uL.
         """
         _cache_key = gen_random_hash() if _cache_key is None else _cache_key
 
         mixlines = list(self.mixlines(tablefmt=tablefmt, _cache_key=_cache_key))
-
-        if not buffer_line_if_absent:
-            remove_buffer_mixline_if_absent(mixlines, self.buffer_name)
 
         validation_errors = self.validate(mixlines=mixlines, _cache_key=_cache_key)
 
@@ -419,15 +402,6 @@ class Mix(AbstractComponent):
                 _cache_key=_cache_key,
             )
 
-        if self.has_fixed_total_volume():
-            mixlines.append(
-                MixLine(
-                    [self.buffer_name],
-                    None,
-                    None,
-                    self._get_buffer_volume(_cache_key=_cache_key),
-                )
-            )
         return mixlines
 
     def has_fixed_concentration_action(self) -> bool:
@@ -494,7 +468,7 @@ class Mix(AbstractComponent):
                 if ((mixline.note is None) or ("ECHO" not in mixline.note))
                 else False  # FIXME
             ):
-                if mixline.names == [self.buffer_name]:
+                if mixline.names == [self.buffer_name]: # FIXME: handle generic FillToVolume
                     # This is the line for the buffer
                     # TODO: tell them what is the maximum source concentration they can have
                     msg = (
@@ -1335,7 +1309,6 @@ class _SplitMix(Mix):
         well_marker: None | str | Callable[[str], str] = None,
         title_level: Literal[1, 2, 3, 4, 5, 6] = 3,
         warn_unsupported_title_format: bool = True,
-        buffer_name: str = "Buffer",
         tablefmt: str | TableFormat = "pipe",
         include_plate_maps: bool = True,
     ) -> str:
@@ -1346,7 +1319,6 @@ class _SplitMix(Mix):
             well_marker=well_marker,
             title_level=title_level,
             warn_unsupported_title_format=warn_unsupported_title_format,
-            buffer_name=buffer_name,
             tablefmt=tablefmt,
             include_plate_maps=include_plate_maps,
         )
@@ -1468,7 +1440,7 @@ def split_mix(
         test_tube_name=mix.test_tube_name,
         fixed_total_volume=large_volume if mix.fixed_total_volume is not None else None,
         fixed_concentration=mix.fixed_concentration,
-        buffer_name=mix.buffer_name,
+        buffer_name=mix.buffer_name, # FIXME: deal with this
         reference=mix.reference,
         min_volume=mix.min_volume,
     )
