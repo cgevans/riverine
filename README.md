@@ -1,5 +1,5 @@
 [![Documentation Status](https://readthedocs.org/projects/riverine/badge/?version=latest)](https://riverine.readthedocs.io/en/latest/?badge=latest)
-[![Codecov](https://img.shields.io/codecov/c/github/cgevans/mixes)](https://pypi.org/project/riverine/)
+[![Codecov](https://img.shields.io/codecov/c/github/cgevans/riverine)](https://app.codecov.io/gh/cgevans/riverine/)
 [![GitHub Workflow
 Status](https://img.shields.io/github/actions/workflow/status/cgevans/mixes/python-package.yml?branch=main)](https://github.com/cgevans/mixes/actions/workflows/python-package.yml)
 [![PyPI](https://img.shields.io/pypi/v/riverine)](https://pypi.org/project/riverine/)
@@ -10,14 +10,7 @@ Status](https://img.shields.io/github/actions/workflow/status/cgevans/mixes/pyth
 For DNA 28, our [poster as a Jupyter notebook is available here](https://costi.eu/poster-notebook.zip).  [Our documentation][docsstable] is in the process of being written ([latest git documentation is here][docslatest]); we also have [a tutorial notebook][tutorial] (WIP).
 
 
-This package, riverine, is a separate package containing the `alhambra.mixes`
-library from
-[alhambra][alhambra]
-modified to be more compatible with Python < 3.10.  Continued development on
-mixes will take place here, and alhambra will be made to depend on this.  **The
-name may change soon to something more unique.**
-
-The mixes package is a Python library to systematically, efficiently, and safely
+Riverine is a Python library to systematically, efficiently, and safely
 design recipes for mixes of many components, intended primarily for DNA
 computation experiments.  The library recursively tracks individual components
 through layers of intermediate mixes, performs checks to ensure those layers of
@@ -33,6 +26,12 @@ components at different concentrations spread across several plates.
 [tutorial]: https://github.com/cgevans/mixes/blob/main/tutorial.ipynb
 
 # Changelog
+
+## v0.7.0
+
+- Renames the package from `alhambra-mixes` to `riverine`.
+- Deprecates Python 3.9 support.
+- Several bug fixes.
 
 ## v0.6.1
 
