@@ -10,7 +10,7 @@ from tabulate import TableFormat
 
 from riverine.util import gen_random_hash, maybe_cache_once
 
-from .actions import AbstractAction, ActionWithComponents, _STRUCTURE_CLASSES
+from .actions import AbstractAction, ActionWithComponents, MixVolumeDep, _STRUCTURE_CLASSES
 from .experiments import Experiment
 from .mixes import Mix
 from .printing import MixLine
@@ -210,6 +210,10 @@ class EchoFixedVolume(AbstractEchoAction):
 
         return ml
 
+    def mix_volume_effect(self, _cache_key=None) -> (MixVolumeDep, DecimalQuantity):
+        return (MixVolumeDep.INDEPENDENT, self.tx_volume(_cache_key=_cache_key))
+
+
 
 @attrs.define(eq=False)
 class EchoEqualTargetConcentration(AbstractEchoAction):
@@ -338,6 +342,10 @@ class EchoEqualTargetConcentration(AbstractEchoAction):
 
         return ml
 
+    def mix_volume_effect(self, _cache_key=None) -> (MixVolumeDep, DecimalQuantity):
+        return (MixVolumeDep.INDEPENDENT, self.tx_volume(_cache_key=_cache_key))
+
+
 
 @attrs.define(eq=False)
 class EchoTargetConcentration(AbstractEchoAction):
@@ -446,6 +454,9 @@ class EchoTargetConcentration(AbstractEchoAction):
         else:
             return self.set_name
 
+    def mix_volume_effect(self, _cache_key=None) -> (MixVolumeDep, DecimalQuantity):
+        return (MixVolumeDep.DEPENDS, NAN_VOL)
+
 
 @attrs.define(eq=False)
 class EchoFillToVolume(AbstractEchoAction):
@@ -489,7 +500,7 @@ class EchoFillToVolume(AbstractEchoAction):
 
         if len(self.components) > 1:
             raise NotImplementedError(
-                "EchoTargetConcentration with multiple components is not implemented."
+                "EchoFillToVolume with multiple components is not implemented."
             )
 
         if math.isnan(self.target_total_volume.m):
@@ -536,6 +547,8 @@ class EchoFillToVolume(AbstractEchoAction):
             )
         ]
 
+    def mix_volume_effect(self, _cache_key=None) -> (MixVolumeDep, DecimalQuantity):
+        return (MixVolumeDep.DETERMINES, self.target_total_volume)
 
 # class EchoTwoStepConcentration(ActionWithComponents):
 #     """Use an intermediate mix to obtain a target concentration."""

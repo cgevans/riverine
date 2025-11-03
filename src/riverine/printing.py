@@ -190,7 +190,7 @@ def _formatter(
         out = f"{x:,.2f~#P}"
         if isnan(x.m):
             out = _format_error_span(out, tablefmt)
-        if x.m < 0:
+        elif x.m < 0:
             out = _format_error_span(out, tablefmt)
     elif isinstance(x, (list, np.ndarray, pd.Series)):
         out = ", ".join(
