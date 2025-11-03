@@ -30,6 +30,7 @@ components at different concentrations spread across several plates.
 ## v0.7.0
 
 - Renames the package from `alhambra-mixes` to `riverine`.
+- Replaces `Mix.buffer_name` and `Mix.fixed_total_volume` with a more flexible `FillToVolume` action, like the existing `EchoFillToVolume`.  The existing keywords should remain functional for backwards compatibility: they now add and modify a `FillToVolume` action as needed (or modify an `EchoFillToVolume` action if it already exists).
 - Deprecates Python 3.9 support.
 - Several bug fixes.
 
