@@ -30,7 +30,7 @@ __all__ = [
 ]
 
 ureg = pint.UnitRegistry(non_int_type=Decimal)
-ureg.default_format = "~P"
+ureg.formatter.default_format = "~P"
 
 uL = ureg.Unit("uL")
 # µL = ureg.uL
