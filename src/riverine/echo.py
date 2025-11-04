@@ -11,12 +11,12 @@ from tabulate import TableFormat
 from riverine.util import gen_random_hash, maybe_cache_once
 
 from .actions import AbstractAction, ActionWithComponents, MixVolumeDep, _STRUCTURE_CLASSES
-from .experiments import Experiment
-from .mixes import Mix
 from .printing import MixLine
 
 if TYPE_CHECKING:
     from kithairon.picklists import PickList
+    from .mixes import Mix
+    from .experiments import Experiment
 
 
 from .units import (
