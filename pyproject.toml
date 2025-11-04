@@ -47,6 +47,7 @@ classifiers = [
     "Typing :: Typed"]
 dependencies = [
     "attrs >= 22.1",
+    "kithairon >= 0.2.0",
     "numpy",
     "pandas",
     "openpyxl",
@@ -71,14 +72,8 @@ testing = [
     "setuptools",
     "pytest",
     "pytest-cov",
-    "riverine[echo]"
 ]
-echo = [
-    "kithairon >= 0.2.0",
-]
-all = [
-    "riverine[echo]"
-]
+all = []
 
 
 [tool.setuptools.packages.find]
@@ -99,18 +94,10 @@ ignore_missing_imports = true
 dependencies = [
 "pytest",
 "pytest-cov",
-"riverine[echo]",
 ]
 
-[tool.hatch.envs.hatch-test.overrides]
-name.echo.features = ["echo"]
-
 [[tool.hatch.envs.hatch-test.matrix]]
 python = ["3.10", "3.11", "3.12", "3.13", "3.14"]
-
-[[tool.hatch.envs.hatch-test.matrix]]
-python = ["3.10", "3.11", "3.12", "3.13", "3.14"]
-feature = ["echo"]
 
 [tool.ruff]
 ignore = ["TID252", "N816", "F405", "F403", "ARG002"

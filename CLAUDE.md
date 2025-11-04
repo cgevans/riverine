@@ -25,7 +25,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Build and Install
 - `hatch build` - Build package
 - `pip install -e .` - Install in development mode
-- `pip install -e .[echo]` - Install with ECHO liquid handler support (requires Python ≥ 3.10)
 
 ## Architecture
 
@@ -40,7 +39,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Uses `attrs` for class definitions with validation
 - Pint library for unit handling (volumes in μL, concentrations in nM/μM)
 - Polars/Pandas DataFrames for tabular data processing
-- Optional ECHO liquid handler integration via `kithairon` library
+- ECHO liquid handler integration via `kithairon` library
 - Extensive use of type hints and validation
 
 ### File Structure
@@ -60,7 +59,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Coverage reporting with `--cover` flag
 - Multi-version testing via hatch matrix
 - Test data files in `tests/data/`
-- Supports both with and without ECHO functionality
 
 ### Common Patterns
 - Mix creation typically involves: creating components → defining actions → creating Mix → calling `make()`

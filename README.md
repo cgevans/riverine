@@ -40,7 +40,7 @@ components at different concentrations spread across several plates.
 
 ## v0.6.0
 
-- Optional ECHO liquid handler support, with the 'echo' feature (eg, `pip install --upgrade riverine[echo]`).  Uses [kithairon](https://github.com/cgevans/kithairon), which
+- ECHO liquid handler support now included by default. Uses [kithairon](https://github.com/cgevans/kithairon), which
   does require Python ≥ 3.10.
 
 ## v0.5.0
