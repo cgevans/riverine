@@ -24,6 +24,8 @@ import pint
 from tabulate import TableFormat, tabulate
 import polars as pl
 
+from .echo import EchoFillToVolume
+
 from .actions import (
     AbstractAction,  # Fixme: should not need special cases
     FixedConcentration,
@@ -170,7 +172,11 @@ class Mix(AbstractComponent):
 
     def __init__(self, *args, **kwargs):
         if "fixed_total_volume" in kwargs:
-            ftv = _parse_vol_optional(kwargs.pop("fixed_total_volume"))
+            p = kwargs.pop("fixed_total_volume")
+            if p is None:
+                ftv = None
+            else:
+                ftv = _parse_vol_optional(p)
         else:
             ftv = None    
         if "buffer_name" in kwargs:
@@ -218,7 +224,7 @@ class Mix(AbstractComponent):
             if action.mix_volume_effect()[0] == MixVolumeDep.DETERMINES:
                 action.components[0].name = value
                 return
-        self.actions.append(FillToVolume(value, NAN_VOL))
+        self.actions.append(FillToVolume(value, ZERO_VOL))
 
     def __eq__(self, other: object) -> bool:
         if type(self) is not type(other):
@@ -1075,15 +1081,6 @@ class Mix(AbstractComponent):
                     consumed_volumes, made_volumes, _cache_key=_cache_key
                 )
 
-        # Potentially deal with buffer...
-        if self._get_buffer_volume(_cache_key=_cache_key).m > 0:
-            made_volumes[self.buffer_name] = made_volumes.get(
-                self.buffer_name, 0 * ureg.ul
-            )
-            consumed_volumes[self.buffer_name] = consumed_volumes.get(
-                self.buffer_name, 0 * ureg.ul
-            ) + self._get_buffer_volume(_cache_key=_cache_key)
-
         return consumed_volumes, made_volumes
 
     def _unstructure(self, experiment: Experiment | None = None) -> dict[str, Any]:
@@ -1417,7 +1414,7 @@ def split_mix(
     actions = list(mix.actions)
 
     # replace FixedVolume actions in `large_mix` with larger volumes
-    new_fixed_volume_actions = {}
+    new_actions = {}
     for i, action in enumerate(actions):
         if isinstance(action, FixedVolume):
             large_fixed_volume_action = FixedVolume(
@@ -1426,10 +1423,15 @@ def split_mix(
                 set_name=action.set_name,
                 compact_display=action.compact_display,
             )
-            new_fixed_volume_actions[i] = large_fixed_volume_action
-
-    for i, large_fixed_volume_action in new_fixed_volume_actions.items():
-        actions[i] = large_fixed_volume_action
+            new_actions[i] = large_fixed_volume_action
+        if isinstance(action, FillToVolume):
+            large_fill_to_volume_action = FillToVolume(
+                components=action.components,
+                target_total_volume=large_volume,
+            )
+            new_actions[i] = large_fill_to_volume_action
+    for i, new_action in new_actions.items():
+        actions[i] = new_action
 
     large_mix = _SplitMix(
         num_tubes=num_tubes,
@@ -1438,9 +1440,7 @@ def split_mix(
         actions=actions,
         name=mix.name,
         test_tube_name=mix.test_tube_name,
-        fixed_total_volume=large_volume if mix.fixed_total_volume is not None else None,
         fixed_concentration=mix.fixed_concentration,
-        buffer_name=mix.buffer_name, # FIXME: deal with this
         reference=mix.reference,
         min_volume=mix.min_volume,
     )
@@ -1493,6 +1493,7 @@ def difference(s1: Iterable[T], s2: Iterable[T]) -> list[T]:
 def compute_shared_actions(
     mixes: Iterable[Mix],
     exclude_shared_components: Iterable[str | Component] = (),
+    exclude_fills: bool = True,
 ) -> tuple[list[AbstractAction], list[list[AbstractAction]]]:
     """
     Compute the components (identified by Actions) shared by every mix in `mixes`, as well as those
@@ -1508,6 +1509,10 @@ def compute_shared_actions(
         components appearing in actions to exclude from the return value `shared_actions`,
         even if those actions appear in every mix in `mixes` (note if an action has many components,
         if at least one of them is in `exclude_shared_components`, then the entire action will be excluded)
+
+    exclude_fills
+        if True, exclude FillToVolume actions from the return value `shared_actions`,
+        even if they appear in every mix in `mixes`
 
     Returns
     -------
@@ -1542,7 +1547,7 @@ def compute_shared_actions(
             if comp.name in exclude_shared_components:
                 contains_excluded_components = True
                 break
-        if not contains_excluded_components:
+        if not contains_excluded_components and (not exclude_fills or not isinstance(action, FillToVolume)):
             shared_actions_excluded.append(action)
     shared_actions = shared_actions_excluded
 
@@ -1595,7 +1600,7 @@ def verify_mixes_for_master_mix(mixes: Iterable[Mix]) -> None:
     # only handling FixedVolume and FixedConcentration actions for now
     for mix in mixes:
         for action in mix.actions:
-            if not isinstance(action, (FixedVolume, FixedConcentration)):
+            if not isinstance(action, (FixedVolume, FixedConcentration, FillToVolume)):
                 raise ValueError(
                     f"master_mix can only handle mixes with FixedVolume and FixedConcentration "
                     f"actions, but mix {mix.name} contains a {type(action)} action: "
@@ -1741,7 +1746,7 @@ def master_mix(
     verify_mixes_for_master_mix(mixes)
 
     shared_actions, unique_actions_list = compute_shared_actions(
-        mixes, exclude_shared_components
+        mixes, exclude_shared_components, exclude_fills=True
     )
 
     num_shared_actions = len(shared_actions)
@@ -1812,11 +1817,11 @@ def master_mix(
         new_mix = Mix(
             actions=all_actions,
             name=orig_mix.name,
-            fixed_total_volume=orig_mix.total_volume,
-            buffer_name=orig_mix.buffer_name,
             reference=orig_mix.reference,
             min_volume=orig_mix.min_volume,
         )
+        new_mix.fixed_total_volume = orig_mix.total_volume
+        new_mix.buffer_name = orig_mix.buffer_name
         new_mixes.append(new_mix)
 
     return mas_mix, new_mixes

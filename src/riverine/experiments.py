@@ -265,7 +265,7 @@ class Experiment:
         name: str = "",
         test_tube_name: str | None = None,
         *,
-        fixed_total_volume: DecimalQuantity | str = NAN_VOL,
+        fixed_total_volume: DecimalQuantity | str | None = None,
         fixed_concentration: str | DecimalQuantity | None = None,
         buffer_name: str = "Buffer",
         min_volume: DecimalQuantity | str = Q_("0.5", uL),

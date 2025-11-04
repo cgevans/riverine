@@ -1116,5 +1116,5 @@ class FillToVolume(ActionWithComponents):
         return (MixVolumeDep.DETERMINES, self.target_total_volume)
 
 
-for c in [FixedConcentration, FixedVolume, EqualConcentration, ToConcentration]:
+for c in [FixedConcentration, FixedVolume, EqualConcentration, ToConcentration, FillToVolume]:
     _STRUCTURE_CLASSES[c.__name__] = c
