@@ -114,6 +114,8 @@ def test_component():
 
     assert Component("A") != 5
 
+    assert Component("A").is_mix == False
+
 
 def test_component_allcomps():
     ac = Component("A", 1 * uM).all_components()
@@ -227,6 +229,8 @@ def test_a_mix(reference: Reference):
         fixed_total_volume=ureg("50 uL"),
         fixed_concentration="strand3",
     ).with_reference(reference)
+
+    assert m.is_mix
 
     assert m.buffer_volume == ureg("5 uL")
     assert m.concentration == ureg("400 nM")
@@ -495,6 +499,40 @@ def assert_close(
     # what happens with the default rtol parameter of pint.testing.assert_allclose.
     pint.testing.assert_allclose(actual, expected, rtol, atol, msg) # type: ignore
 
+def test_mix_conflicting_fills_and_fixed_total_volume():
+    from riverine import FixedConcentration, FixedVolume, Mix, Strand, FillToVolume
+
+
+    with pytest.raises(ValueError):
+        m = Mix(
+            actions=[FillToVolume("Buffer", "100 uL"), FixedConcentration(components=[Component("A", "100 nM")], fixed_concentration="10 nM")],
+            name="test",
+            fixed_total_volume="100 uL",
+        )
+
+def test_set_fixed_total_volume_after_init():
+    from riverine import FixedConcentration, FixedVolume, Mix, Strand, FillToVolume
+
+    m = Mix(
+        actions=[FillToVolume("Buffer", "100 uL")],
+        name="test",
+    )
+    m.fixed_total_volume = "150 uL"
+    assert m.fixed_total_volume == Q_("150 uL")
+
+    m.buffer_name = "Buffer2"
+
+    assert m.buffer_name == "Buffer2"
+    assert m.actions[0].components[0].name == "Buffer2"
+
+def test_no_buffer_volume():
+    # FixedVolume only actions, no buffer
+
+    m = Mix(
+        actions=[FixedVolume(components=[Component("A", "100 nM")], fixed_volume="100 uL")],
+        name="test",
+    )
+    assert m.buffer_volume == Q_("0 uL")
 
 def test_split_mix():
     from riverine import FixedConcentration, FixedVolume, Mix, Strand, split_mix
