@@ -282,7 +282,7 @@ class Reference:
                         ).m_as(nM)
                     all_seqs = (
                         pd.concat(
-                            data.values(), keys=data.keys(), names=["Plate"], copy=False
+                            data.values(), keys=data.keys(), names=["Plate"]
                         )
                         .reset_index()
                         .drop(columns=["level_1"])

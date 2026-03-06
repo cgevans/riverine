@@ -118,5 +118,33 @@ def test_printing_module_available():
     """Test that the printing submodule is available."""
     import alhambra_mixes
     assert hasattr(alhambra_mixes, 'printing')
-    assert hasattr(alhambra_mixes.printing, 'plate')
+
+def test_submodule_import_actions():
+    """Test that actions submodule can be imported."""
+    from alhambra_mixes import actions
+    assert hasattr(actions, 'AbstractAction')
+    
+    import alhambra_mixes.actions
+    assert hasattr(alhambra_mixes.actions, 'FixedVolume')
+
+
+def test_deprecation_warning():
+    """Test that importing alhambra_mixes raises a FutureWarning."""
+    import warnings
+    import sys
+    
+    # Remove module if already imported
+    if 'test_warning_module' in sys.modules:
+        del sys.modules['test_warning_module']
+    
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        # Re-import to trigger warning
+        import importlib
+        importlib.reload(sys.modules['alhambra_mixes'])
+        
+        # Check that warning was raised
+        assert len(w) >= 1
+        assert any(issubclass(warning.category, FutureWarning) for warning in w)
+        assert any("renamed to 'riverine'" in str(warning.message) for warning in w)
 

@@ -367,7 +367,7 @@ class ActionWithComponents(AbstractAction):
 
         locdf.fillna({"plate": ""}, inplace=True)
 
-        locdf.sort_values(
+        locdf = locdf.sort_values(
             by=["plate", "ea_vols", "well"], ascending=[True, False, True]
         )
 
@@ -469,7 +469,7 @@ class FixedVolume(ActionWithComponents):
     Examples
     --------
 
-    >>> from alhambra.mixes import *
+    >>> from riverine.mixes import *
     >>> components = [
     ...     Component("c1", "200 nM"),
     ...     Component("c2", "200 nM"),
@@ -771,7 +771,7 @@ class FixedConcentration(ActionWithComponents):
     Examples
     --------
 
-    >>> from alhambra.mixes import *
+    >>> from riverine.mixes import *
     >>> components = [
     ...     Component("c1", "200 nM"),
     ...     Component("c2", "200 nM"),

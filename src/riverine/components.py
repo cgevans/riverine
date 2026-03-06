@@ -112,13 +112,17 @@ class AbstractComponent(ABC):
 
     def _update_volumes(
         self,
-        consumed_volumes: dict[str, DecimalQuantity] = {},
-        made_volumes: dict[str, DecimalQuantity] = {},
+        consumed_volumes: dict[str, DecimalQuantity] | None = None,
+        made_volumes: dict[str, DecimalQuantity] | None = None,
         _cache_key=None,
     ) -> Tuple[dict[str, DecimalQuantity], dict[str, DecimalQuantity]]:
         """
         Given a
         """
+        if consumed_volumes is None:
+            consumed_volumes = {}
+        if made_volumes is None:
+            made_volumes = {}
         if self.name in made_volumes:
             # We've already been seen.  Ignore our components.
             return consumed_volumes, made_volumes
@@ -270,7 +274,7 @@ class Component(AbstractComponent):
             )
         elif (len(matches) == 0) and len(mismatches) > 0:
             raise ValueError(
-                "Component has only mismatched references: %s", self, mismatches
+                f"Component has only mismatched references: {self}, {mismatches}"
             )
 
         match = matches[0]
@@ -351,7 +355,7 @@ class Strand(Component):
             )
         elif (len(matches) == 0) and len(mismatches) > 0:
             raise ValueError(
-                "Strand has only mismatched references: %s", self, mismatches
+                f"Strand has only mismatched references: {self}, {mismatches}"
             )
 
         m = matches[0]

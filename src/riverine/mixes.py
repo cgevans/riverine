@@ -1052,14 +1052,18 @@ class Mix(AbstractComponent):
 
     def _update_volumes(
         self,
-        consumed_volumes: dict[str, Quantity] = {},
-        made_volumes: dict[str, Quantity] = {},
+        consumed_volumes: dict[str, Quantity] | None = None,
+        made_volumes: dict[str, Quantity] | None = None,
         _cache_key=None,
     ) -> Tuple[dict[str, Quantity], dict[str, Quantity]]:
         """
         Given a
         """
         _cache_key = gen_random_hash() if _cache_key is None else _cache_key
+        if consumed_volumes is None:
+            consumed_volumes = {}
+        if made_volumes is None:
+            made_volumes = {}
         if self.name in made_volumes:
             # We've already been seen.  Ignore our components.
             return consumed_volumes, made_volumes
@@ -1292,6 +1296,7 @@ class _SplitMix(Mix):
     names: None | list[str] = None
 
     def __attrs_post_init__(self) -> None:
+        super().__attrs_post_init__()
         if self.num_tubes < 1:
             raise ValueError("num_tubes must be positive")
         if self.small_mix_volume == Q_(Decimal(0), "uL"):

@@ -10,10 +10,10 @@ from typing import (
     Literal,
     Mapping,
     Sequence,
-    Set,
     TextIO,
     Tuple,
 )
+from collections.abc import KeysView, ValuesView, ItemsView
 
 import attrs
 
@@ -101,7 +101,7 @@ class LocationInfo:
     info: dict[str, Any] = attrs.field(factory=dict)
 
     @classmethod
-    def from_obj(self, obj) -> LocationInfo:
+    def from_obj(cls, obj) -> LocationInfo:
         if isinstance(obj, LocationInfo):
             return obj
         elif isinstance(obj, dict):
@@ -142,13 +142,13 @@ class LocationDict:
     def __len__(self) -> int:
         return len(self._locs)
 
-    def keys(self) -> Set[str]:
+    def keys(self) -> KeysView[str]:
         return self._locs.keys()
 
-    def values(self) -> Set[LocationInfo]:
+    def values(self) -> ValuesView[LocationInfo]:
         return self._locs.values()
 
-    def items(self) -> Set[Tuple[str, LocationInfo]]:
+    def items(self) -> ItemsView[str, LocationInfo]:
         return self._locs.items()
 
     def __repr__(self) -> str:
@@ -430,16 +430,10 @@ class Experiment:
             p = Path(filename_or_stream)
             if not p.suffix:
                 p = p.with_suffix(".json")
-            s: TextIO = open(p)
-            close = True
+            with open(p) as s:
+                return cls._structure(json.load(s))
         else:
-            s = filename_or_stream
-            close = False
-
-        exp = cls._structure(json.load(s))
-        if close:
-            s.close()
-        return exp
+            return cls._structure(json.load(filename_or_stream))
 
     def resolve_components(self) -> None:
         """
@@ -461,15 +455,10 @@ class Experiment:
             p = Path(filename_or_stream)
             if not p.suffix:
                 p = p.with_suffix(".json")
-            s: TextIO = open(p, "w")
-            close = True
+            with open(p, "w") as s:
+                json.dump(self._unstructure(), s, indent=2, ensure_ascii=True)
         else:
-            s = filename_or_stream
-            close = False
-
-        json.dump(self._unstructure(), s, indent=2, ensure_ascii=True)
-        if close:
-            s.close()
+            json.dump(self._unstructure(), filename_or_stream, indent=2, ensure_ascii=True)
 
     def use_reference(self, reference: Reference) -> Experiment:
         """

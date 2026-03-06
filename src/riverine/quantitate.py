@@ -50,7 +50,7 @@ import pandas
 import pint
 from pint import Quantity
 
-from .units import NAN_AMOUNT, NAN_VOL, Q_, DecimalQuantity, _parse_vol_optional, nmol, normalize, uM, ureg
+from .units import NAN_AMOUNT, NAN_CONC, NAN_VOL, Q_, DecimalQuantity, _parse_vol_optional, nmol, normalize, uM, ureg
 
 
 def parse_vol(vol: Union[float, int, str, DecimalQuantity]) -> DecimalQuantity:
@@ -65,11 +65,6 @@ __all__ = (
     "hydrate_from_specs",
     "hydrate_and_measure_conc_and_dilute_from_specs",
 )
-
-# This needs to be here to make Decimal NaNs behave the way that NaNs
-# *everywhere else in the standard library* behave.
-decimal.setcontext(decimal.ExtendedContext)
-
 
 warnings.filterwarnings(
     "ignore",
@@ -106,7 +101,7 @@ def parse_conc(conc: float | str | DecimalQuantity) -> DecimalQuantity:
         conc = Q_(D(conc.m), conc.u)
         return normalize(conc)
     elif conc is None:
-        return NAN_VOL
+        return NAN_CONC
     raise ValueError
 
 
