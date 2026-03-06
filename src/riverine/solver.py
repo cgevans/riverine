@@ -19,11 +19,9 @@ from .units import (
     uL,
 )
 
-from .actions import MixVolumeDep
-
 
 def compute_total_volume(
-    action_effects: Sequence[tuple[MixVolumeDep, DecimalQuantity]],
+    action_effects: Sequence[tuple],
 ) -> DecimalQuantity:
     """Determine total mix volume from action effects.
 
@@ -31,6 +29,7 @@ def compute_total_volume(
     ----------
     action_effects
         List of (MixVolumeDep, volume) tuples from each action.
+        MixVolumeDep values: "determines", "independent", "depends".
 
     Returns
     -------
@@ -39,9 +38,9 @@ def compute_total_volume(
     """
     indep_vol = Q_("0.0", uL)
     for effect, vol in action_effects:
-        if effect == MixVolumeDep.DETERMINES:
+        if effect.value == "determines":
             return vol
-        elif effect == MixVolumeDep.INDEPENDENT:
+        elif effect.value == "independent":
             indep_vol += vol
         else:
             indep_vol = NAN_VOL
