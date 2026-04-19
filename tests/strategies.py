@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import decimal
 from decimal import Decimal
 from math import isnan
-from typing import Sequence
 
 from hypothesis import strategies as st
 
@@ -12,12 +12,11 @@ from riverine import Component
 from riverine.units import DecimalQuantity, Q_, nM, uL
 
 
-_DEC_CTX_SCALE = 6
-
-
-def _quantize(d: Decimal, places: int = _DEC_CTX_SCALE) -> Decimal:
-    q = Decimal(10) ** -places
-    return d.quantize(q)
+# `riverine.units` sets decimal.ExtendedContext (prec=9) at import time.
+# Strategy arithmetic runs in a local higher-precision context so that
+# intermediate quantize/divide steps don't silently produce NaN.
+_HI_PREC = decimal.Context(prec=28, rounding=decimal.ROUND_HALF_EVEN)
+_DEC_PLACES = 3
 
 
 @st.composite
@@ -25,20 +24,22 @@ def decimal_values(
     draw,
     min_value: str = "0.01",
     max_value: str = "10000",
-    places: int = _DEC_CTX_SCALE,
+    places: int = _DEC_PLACES,
 ) -> Decimal:
-    """Decimal values in [min_value, max_value], quantized to `places` digits.
+    """Decimal values in [min_value, max_value], at most `places` fractional digits.
 
-    The scale matches the polars `Decimal(scale=6)` used in `Component.all_components_polars`
-    so property tests don't trip over precision loss at the storage boundary.
+    `places` defaults to 3 — enough to get meaningful variety without pushing
+    values past the 9-digit precision cap set by riverine's Decimal context.
     """
-    lo = Decimal(min_value)
-    hi = Decimal(max_value)
-    scale = Decimal(10) ** places
-    lo_i = int(lo * scale)
-    hi_i = int(hi * scale)
+    with decimal.localcontext(_HI_PREC):
+        lo = Decimal(min_value)
+        hi = Decimal(max_value)
+        scale = Decimal(10) ** places
+        lo_i = int(lo * scale)
+        hi_i = int(hi * scale)
     n = draw(st.integers(min_value=lo_i, max_value=hi_i))
-    return _quantize(Decimal(n) / scale, places)
+    with decimal.localcontext(_HI_PREC):
+        return (Decimal(n) / scale).quantize(Decimal(10) ** -places)
 
 
 def volumes(min_uL: str = "1", max_uL: str = "1000") -> st.SearchStrategy[DecimalQuantity]:
@@ -96,24 +97,29 @@ def component_lists(
 def assert_decimal_close(
     a: DecimalQuantity,
     b: DecimalQuantity,
-    rel_tol: str = "1e-9",
-    abs_tol: str = "1e-12",
+    rel_tol: str = "1e-6",
+    abs_tol: str = "1e-9",
 ) -> None:
     """Assert two `DecimalQuantity` values are equal within a relative tolerance.
 
     Converts both to the units of `b` before comparing magnitudes; needed because
     `pint` may store compacted units (nM ↔ μM) after arithmetic.
+
+    Default tolerance is 1e-6: riverine runs Decimal arithmetic at 9-digit
+    precision, so anything tighter is noise.
     """
-    a_m = Decimal(str(a.to(b.u).m))
-    b_m = Decimal(str(b.m))
-    if isnan(a_m) or isnan(b_m):
-        assert isnan(a_m) and isnan(b_m), f"NaN mismatch: {a} vs {b}"
-        return
-    diff = abs(a_m - b_m)
-    scale = max(abs(a_m), abs(b_m), Decimal(abs_tol))
-    assert diff / scale <= Decimal(rel_tol), (
-        f"{a} ({a_m}) not close to {b} ({b_m}); diff={diff}, rel={diff / scale}"
-    )
+    with decimal.localcontext(_HI_PREC):
+        a_m = Decimal(str(a.to(b.u).m))
+        b_m = Decimal(str(b.m))
+        if isnan(a_m) or isnan(b_m):
+            assert isnan(a_m) and isnan(b_m), f"NaN mismatch: {a} vs {b}"
+            return
+        diff = abs(a_m - b_m)
+        scale = max(abs(a_m), abs(b_m), Decimal(abs_tol))
+        rel = diff / scale
+        assert rel <= Decimal(rel_tol), (
+            f"{a} ({a_m}) not close to {b} ({b_m}); diff={diff}, rel={rel}"
+        )
 
 
 def concentrations_list(
