@@ -1,3 +1,3 @@
 import logging
 
-log = logging.getLogger("alhambra")
+log = logging.getLogger("riverine")

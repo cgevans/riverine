@@ -31,9 +31,18 @@ testing = [
     "pytest-cov",
 ]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/alhambra_mixes"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.hatch.envs.hatch-test]
+dependencies = [
+    "pytest",
+    "pytest-cov",
+]
+
+[[tool.hatch.envs.hatch-test.matrix]]
+python = ["3.10", "3.11", "3.12", "3.13", "3.14"]
 

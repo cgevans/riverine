@@ -56,6 +56,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 from .units import *
 from .units import VolumeError, _parse_vol_optional, normalize
+from .solver import compute_total_volume, validate_mix as _validate_mix
 from .util import _get_picklist_class, gen_random_hash, maybe_cache_once
 
 warnings.filterwarnings(
@@ -305,15 +306,9 @@ class Mix(AbstractComponent):
         ):
             return self.fixed_total_volume
         else:
-            indep_vol = Q_("0.0", ureg.uL)
-            for effect, vol in [action.mix_volume_effect(_cache_key=_cache_key) for action in self.actions]:
-                if effect == MixVolumeDep.DETERMINES:
-                    return vol
-                elif effect == MixVolumeDep.INDEPENDENT:
-                    indep_vol += vol
-                else:
-                    indep_vol = NAN_VOL
-            return indep_vol
+            return compute_total_volume(
+                [action.mix_volume_effect(_cache_key=_cache_key) for action in self.actions]
+            )
 
     @property
     def buffer_volume(self) -> Quantity:
@@ -427,45 +422,41 @@ class Mix(AbstractComponent):
             if tablefmt is None:
                 raise ValueError("If mixlines is None, tablefmt must be specified.")
             mixlines = self.mixlines(tablefmt=tablefmt)
-        ntx = [
-            (m.names, m.total_tx_vol) for m in mixlines if m.total_tx_vol is not None
+
+        # Gather data for the pure validation function
+        mixline_names_vols: list[tuple[list[str], DecimalQuantity | None]] = [
+            (m.names, m.total_tx_vol) for m in mixlines
         ]
 
-        error_list: list[VolumeError] = []
+        # Collect intermediate mix info
+        intermediate_mixes: list[tuple[str, DecimalQuantity, DecimalQuantity]] = []
+        for action in self.actions:
+            for component, volume in zip(
+                action.components,
+                action.each_volumes(
+                    self._get_total_volume(_cache_key=_cache_key),
+                    self.actions,
+                    _cache_key=_cache_key,
+                ),
+            ):
+                if isnan(volume.m):
+                    continue
+                if isinstance(component, Mix):
+                    intermediate_mixes.append(
+                        (component.name, component.fixed_total_volume, volume)
+                    )
 
-        # special case check for FixedConcentration action(s) used
-        # without corresponding Mix.fixed_total_volume
-        if not self.has_fixed_total_volume() and self.has_fixed_concentration_action():
-            error_list.append(
-                VolumeError(
-                    "If a FixedConcentration action is used, "
-                    "then Mix.fixed_total_volume must be specified."
-                )
-            )
+        error_list = _validate_mix(
+            mixline_names_vols=mixline_names_vols,
+            total_vol=self._get_total_volume(_cache_key=_cache_key),
+            min_volume=self.min_volume,
+            has_fixed_concentration_action=self.has_fixed_concentration_action(),
+            has_fixed_total_volume=self.has_fixed_total_volume(),
+            buffer_name=self.buffer_name,
+            intermediate_mixes=intermediate_mixes,
+        )
 
-        nan_vols = [", ".join(n) for n, x in ntx if isnan(x.m)]
-        if nan_vols:
-            error_list.append(
-                VolumeError(
-                    "Some volumes aren't defined (mix probably isn't fully specified): "
-                    + "; ".join(x or "" for x in nan_vols)
-                    + "."
-                )
-            )
-
-        tot_vol = self._get_total_volume(_cache_key=_cache_key)
-        high_vols = [(n, x) for n, x in ntx if not isnan(x.m) and x > tot_vol]
-        if high_vols:
-            error_list.append(
-                VolumeError(
-                    "Some items have higher transfer volume than total mix volume of "
-                    f"{tot_vol} "
-                    "(target concentration probably too high for source): "
-                    + "; ".join(f"{', '.join(n)} at {x}" for n, x in high_vols)
-                    + "."
-                )
-            )
-
+        # ECHO-specific per-mixline min_volume check (not in pure solver)
         for mixline in mixlines:
             if (
                 not isnan(mixline.each_tx_vol.m)
@@ -474,9 +465,7 @@ class Mix(AbstractComponent):
                 if ((mixline.note is None) or ("ECHO" not in mixline.note))
                 else False  # FIXME
             ):
-                if mixline.names == [self.buffer_name]: # FIXME: handle generic FillToVolume
-                    # This is the line for the buffer
-                    # TODO: tell them what is the maximum source concentration they can have
+                if mixline.names == [self.buffer_name]:
                     msg = (
                         f'Negative buffer volume of mix "{self.name}"; '
                         f"this is typically caused by requesting too large a target concentration in a "
@@ -484,7 +473,7 @@ class Mix(AbstractComponent):
                         f"since the source concentrations are too low. "
                         f"Try lowering the target concentration."
                     )
-                else:  # FIXME: reimplement
+                else:
                     msg = (
                         f"Some items have lower transfer volume than {self.min_volume}\n"
                         f'This is in creating mix "{self.name}", '
@@ -492,44 +481,6 @@ class Mix(AbstractComponent):
                         f"{mixline.names}"
                     )
                 error_list.append(VolumeError(msg))
-
-        # We'll check the last tx_vol first, because it is usually buffer.
-        if not isnan(ntx[-1][1].m) and ntx[-1][1] < ZERO_VOL:
-            error_list.append(
-                VolumeError(
-                    f"Last mix component ({ntx[-1][0]}) has volume {ntx[-1][1]} < 0 µL. "
-                    "Component target concentrations probably too high."
-                )
-            )
-
-        neg_vols = [(n, x) for n, x in ntx if not isnan(x.m) and x < ZERO_VOL]
-        if neg_vols:
-            error_list.append(
-                VolumeError(
-                    "Some volumes are negative: "
-                    + "; ".join(f"{', '.join(n)} at {x}" for n, x in neg_vols)
-                    + "."
-                )
-            )
-
-        # check for sufficient volume in intermediate mixes
-        # XXX: this assumes 1-1 correspondence between mixlines and actions (true in current implementation)
-        for action in self.actions:
-            for component, volume in zip(
-                action.components, action.each_volumes(self._get_total_volume(_cache_key=_cache_key), self.actions, _cache_key=_cache_key)
-            ):
-                if isnan(volume.m):
-                    continue
-                if isinstance(component, Mix):
-                    if component.fixed_total_volume < volume:
-                        error_list.append(
-                            VolumeError(
-                                f'intermediate Mix "{component.name}" needs {volume} to create '
-                                f'Mix "{self.name}", but Mix "{component.name}" contains only '
-                                f"{component.fixed_total_volume}."
-                            )
-                        )
-            # for each_vol, component in zip(mixline.each_tx_vol, action.all_components()):
 
         return error_list
 
@@ -1052,14 +1003,18 @@ class Mix(AbstractComponent):
 
     def _update_volumes(
         self,
-        consumed_volumes: dict[str, Quantity] = {},
-        made_volumes: dict[str, Quantity] = {},
+        consumed_volumes: dict[str, Quantity] | None = None,
+        made_volumes: dict[str, Quantity] | None = None,
         _cache_key=None,
     ) -> Tuple[dict[str, Quantity], dict[str, Quantity]]:
         """
         Given a
         """
         _cache_key = gen_random_hash() if _cache_key is None else _cache_key
+        if consumed_volumes is None:
+            consumed_volumes = {}
+        if made_volumes is None:
+            made_volumes = {}
         if self.name in made_volumes:
             # We've already been seen.  Ignore our components.
             return consumed_volumes, made_volumes
@@ -1292,6 +1247,7 @@ class _SplitMix(Mix):
     names: None | list[str] = None
 
     def __attrs_post_init__(self) -> None:
+        super().__attrs_post_init__()
         if self.num_tubes < 1:
             raise ValueError("num_tubes must be positive")
         if self.small_mix_volume == Q_(Decimal(0), "uL"):

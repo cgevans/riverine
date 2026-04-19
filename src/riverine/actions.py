@@ -14,6 +14,14 @@ from .dictstructure import _STRUCTURE_CLASSES, _structure, _unstructure
 from .locations import WellPos, mixgaps
 from .printing import MixLine, TableFormat
 from .units import _parse_vol_optional_none_zero
+from .solver import (
+    compute_dest_concentrations,
+    compute_equal_concentration_each,
+    compute_fill_volume,
+    compute_fixed_concentration_each,
+    compute_fixed_volume_each,
+    compute_toconcentration_dest_concs,
+)
 
 import polars as pl
 
@@ -367,7 +375,7 @@ class ActionWithComponents(AbstractAction):
 
         locdf.fillna({"plate": ""}, inplace=True)
 
-        locdf.sort_values(
+        locdf = locdf.sort_values(
             by=["plate", "ea_vols", "well"], ascending=[True, False, True]
         )
 
@@ -469,7 +477,7 @@ class FixedVolume(ActionWithComponents):
     Examples
     --------
 
-    >>> from alhambra.mixes import *
+    >>> from riverine.mixes import *
     >>> components = [
     ...     Component("c1", "200 nM"),
     ...     Component("c2", "200 nM"),
@@ -511,13 +519,11 @@ class FixedVolume(ActionWithComponents):
         _cache_key=None,
     ) -> list[DecimalQuantity]:
         _cache_key = gen_random_hash() if _cache_key is None else _cache_key
-        return [
-            x * y
-            for x, y in zip(
-                self.source_concentrations,
-                _ratio(self.each_volumes(mix_vol, actions, _cache_key=_cache_key), mix_vol),
-            )
-        ]
+        return compute_dest_concentrations(
+            self.source_concentrations,
+            self.each_volumes(mix_vol, actions, _cache_key=_cache_key),
+            mix_vol,
+        )
 
     @maybe_cache_once
     def each_volumes(
@@ -526,7 +532,7 @@ class FixedVolume(ActionWithComponents):
         actions: Sequence[AbstractAction] = (),
         _cache_key=None,
     ) -> list[DecimalQuantity]:
-        return [cast(DecimalQuantity, self.fixed_volume.to(uL))] * len(self.components)
+        return compute_fixed_volume_each(self.fixed_volume, len(self.components))
 
     @property
     def name(self) -> str:
@@ -685,25 +691,8 @@ class EqualConcentration(FixedVolume):
         actions: Sequence[AbstractAction] = (),
         _cache_key=None,
     ) -> list[DecimalQuantity]:
-        # match self.equal_conc:
-        if self.method == "min_volume":
-            sc = self._get_source_concentrations(_cache_key=_cache_key)
-            scmax = max(sc)
-            return [self.fixed_volume * x for x in _ratio(scmax, sc)]
-        elif (self.method == "max_volume") | (
-            isinstance(self.method, Sequence) and self.method[0] == "max_fill"
-        ):
-            sc = self._get_source_concentrations(_cache_key=_cache_key)
-            scmin = min(sc)
-            return [self.fixed_volume * x for x in _ratio(scmin, sc)]
-        elif self.method == "check":
-            sc = self._get_source_concentrations(_cache_key=_cache_key)
-            if any(x != sc[0] for x in sc):
-                raise ValueError("Concentrations")
-            return [cast(DecimalQuantity, self.fixed_volume.to(uL))] * len(
-                self.components
-            )
-        raise ValueError(f"equal_conc={self.method!r} not understood")
+        sc = self._get_source_concentrations(_cache_key=_cache_key)
+        return compute_equal_concentration_each(self.fixed_volume, sc, self.method)
 
     @maybe_cache_once
     def tx_volume(
@@ -771,7 +760,7 @@ class FixedConcentration(ActionWithComponents):
     Examples
     --------
 
-    >>> from alhambra.mixes import *
+    >>> from riverine.mixes import *
     >>> components = [
     ...     Component("c1", "200 nM"),
     ...     Component("c2", "200 nM"),
@@ -816,10 +805,11 @@ class FixedConcentration(ActionWithComponents):
         actions: Sequence[AbstractAction] = (),
         _cache_key=None,
     ) -> list[DecimalQuantity]:
-        ea_vols = [
-            mix_volume * r
-            for r in _ratio(self.fixed_concentration, self._get_source_concentrations(_cache_key=_cache_key))
-        ]
+        ea_vols = compute_fixed_concentration_each(
+            mix_volume,
+            self.fixed_concentration,
+            self._get_source_concentrations(_cache_key=_cache_key),
+        )
         if not math.isnan(self.min_volume.m):
             below_min = []
             for comp, vol in zip(self.components, ea_vols):
@@ -946,7 +936,7 @@ class ToConcentration(ActionWithComponents):
         if actions:
             _othercomps = self._othercomps(mix_vol, actions, _cache_key=_cache_key)
         else:
-            _othercomps = None 
+            _othercomps = None
         if _othercomps is not None:
             otherconcs = [
                 Q_(_othercomps.loc[comp.name, "concentration_nM"], nM)  # type: ignore
@@ -956,7 +946,7 @@ class ToConcentration(ActionWithComponents):
             ]
         else:
             otherconcs = [ZERO_CONC for _ in self.components]
-        return [self.fixed_concentration - other for other in otherconcs]
+        return compute_toconcentration_dest_concs(self.fixed_concentration, otherconcs)
 
     @maybe_cache_once
     def each_volumes(
@@ -1039,15 +1029,11 @@ class FillToVolume(ActionWithComponents):
         actions: Sequence[AbstractAction] = (),
         _cache_key=None,
     ) -> list[DecimalQuantity]:
-        return [
-            x * y
-            for x, y in zip(
-                self._get_source_concentrations(_cache_key=_cache_key),
-                _ratio(
-                    self.each_volumes(mix_vol, actions, _cache_key=_cache_key), mix_vol
-                ),
-            )
-        ]
+        return compute_dest_concentrations(
+            self._get_source_concentrations(_cache_key=_cache_key),
+            self.each_volumes(mix_vol, actions, _cache_key=_cache_key),
+            mix_vol,
+        )
 
     @maybe_cache_once
     def each_volumes(
@@ -1075,13 +1061,7 @@ class FillToVolume(ActionWithComponents):
         else:
             tvol = self.target_total_volume
 
-        maybe_vol = (tvol - othervol)
-        if math.isnan(maybe_vol.m):
-            return [NAN_VOL] * len(self.components)
-
-        return [
-            maybe_vol
-        ]
+        return [compute_fill_volume(tvol, othervol)]
 
     @maybe_cache_once
     def _mixlines(
