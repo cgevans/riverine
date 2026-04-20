@@ -10,8 +10,14 @@ from pint.facets.plain import PlainQuantity, PlainUnit
 from typing_extensions import TypeAlias
 
 # This needs to be here to make Decimal NaNs behave the way that NaNs
-# *everywhere else in the standard library* behave.
-decimal.setcontext(decimal.ExtendedContext)
+# *everywhere else in the standard library* behave (ExtendedContext clears
+# the InvalidOperation/DivisionByZero traps). Precision is bumped from
+# ExtendedContext's default 9 to match Python's default 28, so ordinary
+# arithmetic doesn't silently fall into NaN when a result needs more than
+# 9 significant digits.
+_riverine_decimal_ctx = decimal.ExtendedContext.copy()
+_riverine_decimal_ctx.prec = 28
+decimal.setcontext(_riverine_decimal_ctx)
 
 __all__ = [
     "ureg",
