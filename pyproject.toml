@@ -73,6 +73,7 @@ all = []
 dev = [
     "pytest",
     "pytest-cov",
+    "pytest-randomly",
     "hypothesis",
 ]
 
@@ -90,15 +91,6 @@ warn_unused_configs = true
 ignore_missing_imports = true
 #disallow_untyped_defs = true
 #disallow_incomplete_defs = true
-
-[tool.hatch.envs.hatch-test]
-dependencies = [
-"pytest",
-"pytest-cov",
-]
-
-[[tool.hatch.envs.hatch-test.matrix]]
-python = ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
 [tool.ruff]
 ignore = ["TID252", "N816", "F405", "F403", "ARG002"
