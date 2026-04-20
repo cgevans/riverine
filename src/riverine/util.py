@@ -44,47 +44,39 @@ __all__ = (
 )
 
 
+_UNSET = object()
+
+
 def maybe_cache_once(fun):
-    last_hash = None
+    """Cache the result of the most recent call whose `_cache_key` is not None.
+
+    Cache identity is compared by equality on `(_cache_key, args, kwargs)`.
+    An earlier version keyed by `hash(...)` alone, which returned stale data
+    on any hash collision.
+    """
+
+    last_key: object = _UNSET
     last_cache_data = None
 
     def inner(*args, _cache_key=None, **kwargs):
-        nonlocal last_hash, last_cache_data
-        # print((_cache_key, *args, tuple((k, v) for k, v in kwargs.items())))
-        # print(fun)
-        current_hash = hash(
-            (
-                _cache_key,
-                tuple(a if not isinstance(a, list) else tuple(a) for a in args),
-                tuple(
-                    [
-                        (k, v if not isinstance(v, list) else tuple(v))
-                        for k, v in kwargs.items()
-                    ]
-                ),
-            )
-        )
-        # print((current_hash, last_hash, last_cache_data))
-        if (
-            (_cache_key is not None)
-            and (current_hash == last_hash)
-            and (last_cache_data is not None)
-        ):
+        nonlocal last_key, last_cache_data
+
+        if _cache_key is None:
+            global CACHE_SKIPS
+            CACHE_SKIPS += 1
+            return fun(*args, **kwargs, _cache_key=_cache_key)
+
+        current_key = (_cache_key, args, tuple(sorted(kwargs.items())))
+        if last_key is not _UNSET and current_key == last_key:
             global CACHE_HITS
             CACHE_HITS += 1
             return last_cache_data
 
+        global CACHE_MISSES
+        CACHE_MISSES += 1
         data = fun(*args, **kwargs, _cache_key=_cache_key)
-        if _cache_key is not None:
-            global CACHE_MISSES
-            CACHE_MISSES += 1
-            last_hash = current_hash
-            last_cache_data = data
-        else:
-            global CACHE_SKIPS
-            CACHE_SKIPS += 1
-            # raise ValueError("Cache key was not provided, so cache was not used.")
-            # print(fun, args, kwargs)
+        last_key = current_key
+        last_cache_data = data
         return data
 
     functools.update_wrapper(inner, fun)
