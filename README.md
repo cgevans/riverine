@@ -27,6 +27,15 @@ components at different concentrations spread across several plates.
 
 # Changelog
 
+## v0.7.1
+
+- Several bug fixes, including a mix-caching bug where cached results were keyed by hash rather than equality.
+- Increased internal `Decimal` precision to 28 digits, while preserving NaN-silent behavior.
+- Refactored the solver into pure functions (`solver.py`); `Mix` and action methods now delegate to them.
+- Added extensive property-based (Hypothesis) and round-trip serialization tests.
+- Packaging/CI: cleaned up `pyproject.toml` metadata, added a PEP 735 dev dependency group, and switched CI to `uv`.
+- Documentation: fixed the version numbers shown on Read the Docs.
+
 ## v0.7.0
 
 - Renames the package from `alhambra-mixes` to `riverine`.
