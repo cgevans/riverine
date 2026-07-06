@@ -1,3 +1,5 @@
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
 from .actions import (
     AbstractAction,
     EqualConcentration,
@@ -18,6 +20,11 @@ from .units import DNAN, Q_, VolumeError, nM, uL, uM, ureg
 from .printing import html_with_borders_tablefmt
 
 from . import printing
+
+try:
+    __version__ = _pkg_version("riverine")
+except PackageNotFoundError:  # not installed (e.g. running from source tree)
+    __version__ = "0.0.0"
 
 __all__ = [
     "uL",

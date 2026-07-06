@@ -1,12 +1,6 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.hatch]
-version.source = "vcs"
-
-[tool.hatch.build.hooks.vcs]
-version-file = "src/riverine/_version.py"
 
 [tool.pytest.ini_options]
 # addopts = "--cov alhambra --cov-report term-missing --cov-report html"
@@ -16,16 +10,9 @@ norecursedirs = [
     ".tox"]
 testpaths = ["tests"]
 
-[tool.hatch.metadata.hooks.vcs.urls]
-Homepage = "https://github.com/cgevans/riverine"
-Documentation = "https://riverine.readthedocs.io"
-Repository = "https://github.com/cgevans/riverine.git"
-Issues = "https://github.com/cgevans/riverine/issues"
-source_archive = "https://github.com/cgevans/riverine/archive/{commit_hash}.zip"
-
 [project]
 name = "riverine"
-dynamic = ["version", "urls"]
+version = "0.7.2.dev0"
 description = "Many-component mix library for molecular programming"
 authors = [{name = "Constantine Evans", email="mixes@mb.costi.net"}]
 license = { file = "LICENSE.txt" }
@@ -53,6 +40,12 @@ dependencies = [
 ]
 readme = "README.md"
 requires-python = ">= 3.10"
+
+[project.urls]
+Homepage = "https://github.com/cgevans/riverine"
+Documentation = "https://riverine.readthedocs.io"
+Repository = "https://github.com/cgevans/riverine.git"
+Issues = "https://github.com/cgevans/riverine/issues"
 
 [project.optional-dependencies]
 docs = [

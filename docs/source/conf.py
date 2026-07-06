@@ -22,12 +22,12 @@ project = "riverine"
 copyright = "2022, Constantine Evans"
 author = "Constantine Evans"
 
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
 try:
-    from riverine._version import version
-except ImportError:
-    pass
-else:
-    release = version
+    release = _pkg_version("riverine")
+except PackageNotFoundError:
+    release = ""
 
 # The full version, including alpha/beta/rc tags
 
