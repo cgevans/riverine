@@ -60,7 +60,7 @@ docs = [
     "matplotlib",
     "sphinx-book-theme",
     "sphinx-autoapi",
-    "myst-parser"
+    "myst-nb"
     ]
 testing = [
     "setuptools",

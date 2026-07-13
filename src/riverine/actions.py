@@ -461,7 +461,7 @@ class FixedVolume(ActionWithComponents):
     ----------
 
     components
-        A list of :ref:`Components`.
+        A list of components (see :class:`~riverine.AbstractComponent`), or strings naming them.
 
     fixed_volume
         A fixed volume for the action.  Input can be a string (eg, "5 µL") or a pint Quantity.  The interpretation
@@ -596,7 +596,7 @@ class EqualConcentration(FixedVolume):
     ----------
 
     components
-        A list of :ref:`Components`.
+        A list of components (see :class:`~riverine.AbstractComponent`), or strings naming them.
 
     fixed_volume
         A fixed volume for the action.  Input can be a string (eg, "5 µL") or a pint Quantity.  The interpretation
@@ -620,6 +620,10 @@ class EqualConcentration(FixedVolume):
         every component that is added at a lower volume, a corresponding volume of buffer is added to bring the total
         volume of the two up to the fixed volume.
 
+    Examples
+    --------
+
+    >>> from riverine.mixes import *
     >>> components = [
     ...     Component("c1", "200 nM"),
     ...     Component("c2", "200 nM"),
@@ -735,7 +739,7 @@ class FixedConcentration(ActionWithComponents):
     ----------
 
     components
-        A list of :ref:`Components`.
+        A list of components (see :class:`~riverine.AbstractComponent`), or strings naming them.
 
     fixed_concentration
         A fixed concentration for the action.  Input can be a string (eg, "50 nM") or a pint Quantity.

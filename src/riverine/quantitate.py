@@ -288,7 +288,8 @@ def measure_conc_and_dilute(
 
     Returns
     -------
-        The pair (current concentration of DNA sample, volume to add to reach `target_conc`)
+    tuple[DecimalQuantity, DecimalQuantity]
+        The pair (current concentration of DNA sample, volume to add to reach `target_conc`).
     """
     if vol_removed is None:
         if isinstance(absorbance, (tuple, list)):
@@ -520,8 +521,11 @@ def hydrate_and_measure_conc_and_dilute(
         then it is assumed the number of samples is 1 (i.e., `vol_removed` = 1 µL),
         otherwise if `absorbance` is a list, then the length of the list is assumed to be the
         number of samples taken, each at 1 µL.
-    :return:
-        The pair (current concentration of DNA sample, volume to add to reach `target_conc`)
+
+    Returns
+    -------
+    tuple[DecimalQuantity, DecimalQuantity]
+        The pair (current concentration of DNA sample, volume to add to reach `target_conc`).
     """
     target_conc_high = parse_conc(target_conc_high)
     target_conc_low = parse_conc(target_conc_low)

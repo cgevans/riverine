@@ -1,7 +1,7 @@
 [![Documentation Status](https://readthedocs.org/projects/riverine/badge/?version=latest)](https://riverine.readthedocs.io/en/latest/?badge=latest)
 [![Codecov](https://img.shields.io/codecov/c/github/cgevans/riverine)](https://app.codecov.io/gh/cgevans/riverine/)
 [![GitHub Workflow
-Status](https://img.shields.io/github/actions/workflow/status/cgevans/mixes/python-package.yml?branch=main)](https://github.com/cgevans/mixes/actions/workflows/python-package.yml)
+Status](https://img.shields.io/github/actions/workflow/status/cgevans/riverine/python-package.yml?branch=main)](https://github.com/cgevans/riverine/actions/workflows/python-package.yml)
 [![PyPI](https://img.shields.io/pypi/v/riverine)](https://pypi.org/project/riverine/)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/riverine)](https://pypi.org/project/riverine/)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.6861213.svg)](https://doi.org/10.5281/zenodo.6861213)
@@ -23,9 +23,11 @@ components at different concentrations spread across several plates.
 [alhambra]: https://github.com/DNA-and-Natural-Algorithms-Group/alhambra
 [docsstable]: https://riverine.readthedocs.io/en/stable
 [docslatest]: https://riverine.readthedocs.io/en/latest
-[tutorial]: https://github.com/cgevans/mixes/blob/main/tutorial.ipynb
+[tutorial]: https://github.com/cgevans/riverine/blob/main/tutorial.ipynb
 
 # Changelog
+
+<!-- BEGIN CHANGELOG -->
 
 ## Unreleased
 

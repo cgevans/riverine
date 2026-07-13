@@ -168,8 +168,8 @@ class Reference:
         """
         Load reference information from a CSV file.
 
-        The reference information loaded by this function should be compiled manually, fitting the :ref:`mix reference` format, or
-        be loaded with :func:`compile_reference` or :func:`update_reference`.
+        The reference information loaded by this function should be compiled manually, in the reference
+        file format, or be loaded with :any:`Reference.compile` or :any:`Reference.update`.
         """
         df = pd.read_csv(filename_or_file, converters={"Concentration (nM)": Decimal})
 
@@ -346,15 +346,11 @@ class Reference:
 
         This loads information from the following sources:
 
-        - An IDT plate order spreadsheet.  This does not include concentration.  To add concentration information, list it as a tuple of
-        :code:`(file, concentration)`.
+        - An IDT plate order spreadsheet.  This does not include concentration.  To add concentration information, list it as a tuple of :code:`(file, concentration)`.
         - An IDT bulk order entry text file.
         - An IDT plate spec sheet.
         """
         return cls().update(files, round=round)
-
-
-_REF_COLUMNS = ["Name", "Plate", "Well", "Concentration (nM)", "Sequence"]
 
 
 def _parse_idt_coa(df: pd.DataFrame) -> pd.DataFrame:
