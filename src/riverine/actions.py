@@ -768,7 +768,7 @@ class FixedConcentration(ActionWithComponents):
     ...     Component("c4", "100 nM")
     ... ]
 
-    >>> print(Mix([FixedConcentration(components, "20 nM")], name="example", fixed_total_volume="25 uL"))
+    >>> print(Mix([FixedConcentration(components, "20 nM"), FillToVolume("Buffer", "25 uL")], name="example"))
     Table: Mix: example, Conc: 40.00 nM, Total Vol: 25.00 µl
     <BLANKLINE>
     | Comp       | Src []    | Dest []   | #   | Ea Tx Vol   | Tot Tx Vol   | Loc   | Note   |
@@ -1016,8 +1016,49 @@ MultiFixedConcentration = FixedConcentration
 MultiFixedVolume = FixedVolume
 
 
+class AbstractFillToVolume(ActionWithComponents):
+    """Base class for actions that fill a mix up to a target total volume.
+
+    Concrete subclasses (:class:`PipetteFillToVolume`, and the Echo variant
+    :class:`riverine.echo.EchoFillToVolume`) provide a ``target_total_volume``
+    field; this base supplies the shared volume-effect and buffer-component
+    logic so that detection does not depend on a single concrete class.
+    """
+
+    #: Provided by concrete subclasses as an attrs field.
+    target_total_volume: DecimalQuantity
+
+    @property
+    def buffer_component(self) -> AbstractComponent:
+        """The (single) component used to fill the mix (i.e. the buffer)."""
+        return self.components[0]
+
+    def mix_volume_effect(self, _cache_key=None) -> (MixVolumeDep, DecimalQuantity):
+        return (MixVolumeDep.DETERMINES, self.target_total_volume)
+
+    def _raise_if_other_determiner(self, actions: Sequence[AbstractAction]) -> None:
+        """Guard against mutually-recursive fills.
+
+        A fill computes its volume as ``target - sum(other actions)``; if another
+        action also determines the volume, the two recurse into each other.
+        """
+        others = [
+            a
+            for a in actions
+            if a is not self and a.mix_volume_effect()[0] == MixVolumeDep.DETERMINES
+        ]
+        if others:
+            raise ValueError(
+                "Multiple actions determine the mix's total volume: "
+                + ", ".join(
+                    f"{type(a).__name__}({a.name})" for a in (self, *others)
+                )
+                + ".  Keep a single PipetteFillToVolume / EchoFillToVolume action."
+            )
+
+
 @attrs.define(eq=False)
-class FillToVolume(ActionWithComponents):
+class PipetteFillToVolume(AbstractFillToVolume):
     target_total_volume: DecimalQuantity = attrs.field(
         converter=_parse_vol_optional, default=None
     )
@@ -1043,6 +1084,7 @@ class FillToVolume(ActionWithComponents):
         _cache_key=None,
     ) -> list[DecimalQuantity]:
         _cache_key = gen_random_hash() if _cache_key is None else _cache_key
+        self._raise_if_other_determiner(actions)
         othervol = sum(
             [
                 a.tx_volume(mix_volume, actions, _cache_key=_cache_key)
@@ -1092,9 +1134,12 @@ class FillToVolume(ActionWithComponents):
             )
         ]
 
-    def mix_volume_effect(self, _cache_key=None) -> (MixVolumeDep, DecimalQuantity):
-        return (MixVolumeDep.DETERMINES, self.target_total_volume)
+
+#: Deprecated alias; ``FillToVolume`` is retained for backward compatibility.
+FillToVolume = PipetteFillToVolume
 
 
-for c in [FixedConcentration, FixedVolume, EqualConcentration, ToConcentration, FillToVolume]:
+for c in [FixedConcentration, FixedVolume, EqualConcentration, ToConcentration, PipetteFillToVolume]:
     _STRUCTURE_CLASSES[c.__name__] = c
+# Structure files written under the former class name.
+_STRUCTURE_CLASSES["FillToVolume"] = PipetteFillToVolume

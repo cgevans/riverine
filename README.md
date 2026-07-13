@@ -27,6 +27,16 @@ components at different concentrations spread across several plates.
 
 # Changelog
 
+## Unreleased
+
+- Renamed `FillToVolume` to `PipetteFillToVolume`; `FillToVolume` remains as an alias, and files serialized under the old name still load.
+- `FillToVolume`/`PipetteFillToVolume` and `EchoFillToVolume` now share a common `AbstractFillToVolume` base, so buffer detection (e.g. `Mix.buffer_name`) works for Echo fills as well.
+- A mix with more than one action determining its total volume now raises a clear error instead of recursing infinitely.
+- Deprecated the `fixed_total_volume=`/`buffer_name=` arguments to `Mix` and the `Mix.fixed_total_volume`/`Mix.buffer_name` properties: they still work but emit a `RiverineDeprecationWarning`. Add a `PipetteFillToVolume`/`EchoFillToVolume` action instead.
+- Naming a fill component in the action while giving the volume via `fixed_total_volume=` now composes rather than erroring; setting the total volume in two places (a fill target and `fixed_total_volume=`) raises a clear error.
+- Setting `buffer_name` on a mix with no fill action no longer forces the total volume to zero.
+- `EchoFillToVolume` now raises a clear error when its buffer has no source location, instead of silently emitting a picklist with a null source plate/well.
+
 ## v0.7.1
 
 - Several bug fixes, including a mix-caching bug where cached results were keyed by hash rather than equality.

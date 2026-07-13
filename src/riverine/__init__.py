@@ -2,14 +2,17 @@ from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
 from .actions import (
     AbstractAction,
+    AbstractFillToVolume,
     EqualConcentration,
     FixedConcentration,
     FixedVolume,
     MultiFixedConcentration,
     MultiFixedVolume,
+    PipetteFillToVolume,
     ToConcentration,
     FillToVolume,
 )
+from ._warnings import RiverineDeprecationWarning
 from .components import AbstractComponent, Component, Strand
 from .experiments import Experiment
 from .locations import WellPos
@@ -40,6 +43,8 @@ __all__ = [
     "EqualConcentration",
     "ToConcentration",
     "FillToVolume",
+    "PipetteFillToVolume",
+    "AbstractFillToVolume",
     "MultiFixedVolume",
     "MultiFixedConcentration",
     "Mix",
@@ -57,6 +62,7 @@ __all__ = [
     "master_mix",
     "html_with_borders_tablefmt",
     "printing",
+    "RiverineDeprecationWarning",
 ]
 
 try:
