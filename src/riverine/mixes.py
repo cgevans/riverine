@@ -233,11 +233,7 @@ class Mix(AbstractComponent):
         is_fill = isinstance(det, AbstractFillToVolume)
 
         if ftv is not None:
-            if is_fill and isnan(det.target_total_volume.m):
-                # Composition: the action names the buffer, the kwarg supplies
-                # the volume.
-                det.target_total_volume = ftv
-            else:
+            if not (is_fill and isnan(det.target_total_volume.m)):
                 raise ValueError(
                     "The mix's total volume is already determined by "
                     f"{type(det).__name__}({det.name}); remove the deprecated "
@@ -245,20 +241,27 @@ class Mix(AbstractComponent):
                     "action instead."
                 )
 
-        if buffer_name_given:
-            if not is_fill:
-                _warn_deprecated(
-                    "buffer_name= was given but the determining action is not a "
-                    "fill; it has no effect."
+        # Validate every conflicting input before mutating the caller-provided
+        # action.  A failed Mix construction must not leave that action changed.
+        if buffer_name_given and is_fill:
+            existing = det.components[0].name
+            if existing != buffer_name:
+                raise ValueError(
+                    f'The fill action already uses buffer "{existing}", but '
+                    f'buffer_name="{buffer_name}" was also given.  Set the '
+                    "buffer on the fill action only, and drop buffer_name=."
                 )
-            else:
-                existing = det.components[0].name
-                if existing != buffer_name:
-                    raise ValueError(
-                        f'The fill action already uses buffer "{existing}", but '
-                        f'buffer_name="{buffer_name}" was also given.  Set the '
-                        "buffer on the fill action only, and drop buffer_name=."
-                    )
+
+        if ftv is not None:
+            # Composition: the action names the buffer, the kwarg supplies the
+            # volume.
+            det.target_total_volume = ftv
+
+        if buffer_name_given and not is_fill:
+            _warn_deprecated(
+                "buffer_name= was given but the determining action is not a "
+                "fill; it has no effect."
+            )
 
     @property
     def is_mix(self) -> bool:
@@ -269,10 +272,19 @@ class Mix(AbstractComponent):
 
         Internal, non-warning accessor.
         """
-        for action in self.actions:
-            if action.mix_volume_effect()[0] == MixVolumeDep.DETERMINES:
-                return action
-        return None
+        determining = [
+            action
+            for action in self.actions
+            if action.mix_volume_effect()[0] == MixVolumeDep.DETERMINES
+        ]
+        if len(determining) > 1:
+            raise ValueError(
+                "A mix can have at most one action that determines its total "
+                "volume, but these do: "
+                + ", ".join(f"{type(a).__name__}({a.name})" for a in determining)
+                + ".  Keep a single PipetteFillToVolume / EchoFillToVolume action."
+            )
+        return determining[0] if determining else None
 
     def _get_fixed_total_volume(self) -> DecimalQuantity:
         """The mix's fixed total volume, or NaN if none.  Non-warning accessor."""
@@ -374,18 +386,7 @@ class Mix(AbstractComponent):
         More than one determining action (e.g. two fills) is ambiguous and,
         left unchecked, makes fill volumes mutually recursive.
         """
-        determining = [
-            a
-            for a in self.actions
-            if a.mix_volume_effect()[0] == MixVolumeDep.DETERMINES
-        ]
-        if len(determining) > 1:
-            raise ValueError(
-                "A mix can have at most one action that determines its total "
-                "volume, but these do: "
-                + ", ".join(f"{type(a).__name__}({a.name})" for a in determining)
-                + ".  Keep a single PipetteFillToVolume / EchoFillToVolume action."
-            )
+        self._determining_action()
 
     def printed_name(self, tablefmt: str | TableFormat) -> str:
         return self.name + (

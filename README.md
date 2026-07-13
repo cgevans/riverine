@@ -33,16 +33,16 @@ components at different concentrations spread across several plates.
 - `FillToVolume`/`PipetteFillToVolume` and `EchoFillToVolume` now share a common `AbstractFillToVolume` base, so buffer detection (e.g. `Mix.buffer_name`) works for Echo fills as well.
 - A mix with more than one action determining its total volume now raises a clear error instead of recursing infinitely.
 - Deprecated the `fixed_total_volume=`/`buffer_name=` arguments to `Mix` and the `Mix.fixed_total_volume`/`Mix.buffer_name` properties: they still work but emit a `RiverineDeprecationWarning`. Add a `PipetteFillToVolume`/`EchoFillToVolume` action instead.
-- Naming a fill component in the action while giving the volume via `fixed_total_volume=` now composes rather than erroring; setting the total volume in two places (a fill target and `fixed_total_volume=`) raises a clear error.
+- Naming a fill component in the action while giving the volume via `fixed_total_volume=` now composes rather than erroring; setting the total volume in two places (a fill target and `fixed_total_volume=`) raises an error.
 - Setting `buffer_name` on a mix with no fill action no longer forces the total volume to zero.
-- `EchoFillToVolume` now raises a clear error when its buffer has no source location, instead of silently emitting a picklist with a null source plate/well.
+- `EchoFillToVolume` now raises an error when its buffer has no source location, instead of silently emitting a picklist with a null source plate/well.
 
 ## v0.7.1
 
 - Several bug fixes, including a mix-caching bug where cached results were keyed by hash rather than equality.
 - Increased internal `Decimal` precision to 28 digits, while preserving NaN-silent behavior.
 - Refactored the solver into pure functions (`solver.py`); `Mix` and action methods now delegate to them.
-- Added extensive property-based (Hypothesis) and round-trip serialization tests.
+- Added property-based (Hypothesis) and round-trip serialization tests.
 - Packaging/CI: cleaned up `pyproject.toml` metadata, added a PEP 735 dev dependency group, and switched CI to `uv`.
 - Documentation: fixed the version numbers shown on Read the Docs.
 

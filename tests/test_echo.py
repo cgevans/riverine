@@ -52,6 +52,27 @@ def test_echo_fill_to_volume_requires_buffer_location():
         exp.generate_picklist()
 
 
+@pytest.mark.parametrize("plate", ["", "   ", float("nan")])
+def test_echo_fill_to_volume_rejects_invalid_buffer_plate(plate):
+    pytest.importorskip('kithairon')
+    from riverine import EchoTargetConcentration, EchoFillToVolume
+    exp = Experiment()
+
+    c1 = Component("c1", "10 µM", plate="plate1", well="A1")
+    buffer = Component("Buffer", plate=plate, well="A2")
+    m = Mix(
+        [
+            EchoTargetConcentration(c1, "1 nM"),
+            EchoFillToVolume(buffer, "100 uL"),
+        ],
+        "testmix", plate="destplate", well="A1"
+    )
+    exp.add(m)
+
+    with pytest.raises(ValueError, match="no source location"):
+        exp.generate_picklist()
+
+
 def test_echo_experiment_with_hand_fixed_volume():
     pytest.importorskip('kithairon')
     from riverine import EchoTargetConcentration, FillToVolume

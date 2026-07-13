@@ -96,6 +96,19 @@ def test_two_pipette_fills_raise_valueerror_not_recursion():
         )
 
 
+def test_two_fills_added_after_construction_raise_on_total_volume():
+    m = Mix([FixedVolume(_comps(), "5 uL")], name="x")
+    m.actions.extend(
+        [
+            PipetteFillToVolume("w1", "25 uL"),
+            PipetteFillToVolume("w2", "40 uL"),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="at most one action"):
+        _ = m.total_volume
+
+
 def test_pipette_plus_echo_fill_raise_valueerror():
     pytest.importorskip("kithairon")
     from riverine import EchoFixedVolume, EchoFillToVolume
@@ -190,6 +203,21 @@ def test_conflicting_buffer_name_raises():
             fixed_total_volume="25 uL",
             buffer_name="TE",
         )
+
+
+def test_conflicting_buffer_name_does_not_mutate_fill_target():
+    from math import isnan
+
+    fill = FillToVolume("water")
+    with pytest.raises(ValueError, match="already uses buffer"):
+        Mix(
+            [FixedVolume(_comps(), "5 uL"), fill],
+            name="x",
+            fixed_total_volume="25 uL",
+            buffer_name="TE",
+        )
+
+    assert isnan(fill.target_total_volume.m)
 
 
 def test_agreeing_buffer_name_ok():

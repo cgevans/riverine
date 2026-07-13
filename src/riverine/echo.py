@@ -71,7 +71,11 @@ class AbstractEchoAction(ActionWithComponents, metaclass=ABCMeta):
             for c, v in zip(self.components, eavols):
                 if math.isnan(v.m) or v.m == 0:
                     continue
-                if c.plate is None or c.well is None:
+                if (
+                    not isinstance(c.plate, str)
+                    or not c.plate.strip()
+                    or c.well is None
+                ):
                     raise ValueError(
                         f"EchoFillToVolume buffer '{c.name}' has no source "
                         "location (plate/well); an Echo transfer needs one.  "
