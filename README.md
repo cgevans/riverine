@@ -1,7 +1,7 @@
 [![Documentation Status](https://readthedocs.org/projects/riverine/badge/?version=latest)](https://riverine.readthedocs.io/en/latest/?badge=latest)
 [![Codecov](https://img.shields.io/codecov/c/github/cgevans/riverine)](https://app.codecov.io/gh/cgevans/riverine/)
 [![GitHub Workflow
-Status](https://img.shields.io/github/actions/workflow/status/cgevans/mixes/python-package.yml?branch=main)](https://github.com/cgevans/mixes/actions/workflows/python-package.yml)
+Status](https://img.shields.io/github/actions/workflow/status/cgevans/riverine/python-package.yml?branch=main)](https://github.com/cgevans/riverine/actions/workflows/python-package.yml)
 [![PyPI](https://img.shields.io/pypi/v/riverine)](https://pypi.org/project/riverine/)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/riverine)](https://pypi.org/project/riverine/)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.6861213.svg)](https://doi.org/10.5281/zenodo.6861213)
@@ -23,16 +23,28 @@ components at different concentrations spread across several plates.
 [alhambra]: https://github.com/DNA-and-Natural-Algorithms-Group/alhambra
 [docsstable]: https://riverine.readthedocs.io/en/stable
 [docslatest]: https://riverine.readthedocs.io/en/latest
-[tutorial]: https://github.com/cgevans/mixes/blob/main/tutorial.ipynb
+[tutorial]: https://github.com/cgevans/riverine/blob/main/tutorial.ipynb
 
 # Changelog
+
+<!-- BEGIN CHANGELOG -->
+
+## Unreleased
+
+- Renamed `FillToVolume` to `PipetteFillToVolume`; `FillToVolume` remains as an alias, and files serialized under the old name still load.
+- `FillToVolume`/`PipetteFillToVolume` and `EchoFillToVolume` now share a common `AbstractFillToVolume` base, so buffer detection (e.g. `Mix.buffer_name`) works for Echo fills as well.
+- A mix with more than one action determining its total volume now raises a clear error instead of recursing infinitely.
+- Deprecated the `fixed_total_volume=`/`buffer_name=` arguments to `Mix` and the `Mix.fixed_total_volume`/`Mix.buffer_name` properties: they still work but emit a `RiverineDeprecationWarning`. Add a `PipetteFillToVolume`/`EchoFillToVolume` action instead.
+- Naming a fill component in the action while giving the volume via `fixed_total_volume=` now composes rather than erroring; setting the total volume in two places (a fill target and `fixed_total_volume=`) raises an error.
+- Setting `buffer_name` on a mix with no fill action no longer forces the total volume to zero.
+- `EchoFillToVolume` now raises an error when its buffer has no source location, instead of silently emitting a picklist with a null source plate/well.
 
 ## v0.7.1
 
 - Several bug fixes, including a mix-caching bug where cached results were keyed by hash rather than equality.
 - Increased internal `Decimal` precision to 28 digits, while preserving NaN-silent behavior.
 - Refactored the solver into pure functions (`solver.py`); `Mix` and action methods now delegate to them.
-- Added extensive property-based (Hypothesis) and round-trip serialization tests.
+- Added property-based (Hypothesis) and round-trip serialization tests.
 - Packaging/CI: cleaned up `pyproject.toml` metadata, added a PEP 735 dev dependency group, and switched CI to `uv`.
 - Documentation: fixed the version numbers shown on Read the Docs.
 

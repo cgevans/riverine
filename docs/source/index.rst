@@ -1,4 +1,4 @@
-.. Alhambra documentation master file, created by
+.. Riverine documentation master file, created by
    sphinx-quickstart on Tue Jan 25 06:29:27 2022.
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
@@ -13,6 +13,8 @@ Riverine
    :caption: Contents:
 
    guide
+   tutorial
+   changelog
 
 
 * :ref:`genindex`

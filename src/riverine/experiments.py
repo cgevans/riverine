@@ -291,14 +291,20 @@ class Experiment:
             mix = mix_or_actions
             name = mix.name
         else:
+            # Only forward the deprecated fill kwargs when the caller actually set
+            # them, so Mix does not warn on every add_mix call.
+            deprecated_kwargs: dict[str, Any] = {}
+            if fixed_total_volume is not None:
+                deprecated_kwargs["fixed_total_volume"] = fixed_total_volume
+            if buffer_name != "Buffer":
+                deprecated_kwargs["buffer_name"] = buffer_name
             mix = Mix(
                 mix_or_actions,
                 name=name,
                 test_tube_name=test_tube_name,
-                fixed_total_volume=fixed_total_volume,
                 fixed_concentration=fixed_concentration,
-                buffer_name=buffer_name,
                 min_volume=min_volume,
+                **deprecated_kwargs,
             )
 
         return self.add(

@@ -10,7 +10,13 @@ from tabulate import TableFormat
 
 from riverine.util import gen_random_hash, maybe_cache_once
 
-from .actions import AbstractAction, ActionWithComponents, MixVolumeDep, _STRUCTURE_CLASSES
+from .actions import (
+    AbstractAction,
+    AbstractFillToVolume,
+    ActionWithComponents,
+    MixVolumeDep,
+    _STRUCTURE_CLASSES,
+)
 from .printing import MixLine
 
 if TYPE_CHECKING:
@@ -57,6 +63,26 @@ class AbstractEchoAction(ActionWithComponents, metaclass=ABCMeta):
         mix_vol = mix._get_total_volume(_cache_key=_cache_key)
         dconcs = self.dest_concentrations(mix_vol, mix.actions, _cache_key=_cache_key)
         eavols = self.each_volumes(mix_vol, mix.actions, _cache_key=_cache_key)
+
+        # An Echo fill needs a source location; a buffer given as a bare string
+        # (or otherwise unresolved) has none, which would silently produce a
+        # picklist with a null source plate/well.  Flag it clearly instead.
+        if isinstance(self, AbstractFillToVolume):
+            for c, v in zip(self.components, eavols):
+                if math.isnan(v.m) or v.m == 0:
+                    continue
+                if (
+                    not isinstance(c.plate, str)
+                    or not c.plate.strip()
+                    or c.well is None
+                ):
+                    raise ValueError(
+                        f"EchoFillToVolume buffer '{c.name}' has no source "
+                        "location (plate/well); an Echo transfer needs one.  "
+                        "Provide a located Component (or resolve it via a "
+                        "Reference) rather than a bare name for an Echo buffer."
+                    )
+
         locdf = PickList(
             pl.DataFrame(
                 {
@@ -459,7 +485,7 @@ class EchoTargetConcentration(AbstractEchoAction):
 
 
 @attrs.define(eq=False)
-class EchoFillToVolume(AbstractEchoAction):
+class EchoFillToVolume(AbstractEchoAction, AbstractFillToVolume):
     target_total_volume: DecimalQuantity = attrs.field(
         converter=_parse_vol_optional, default=None
     )
@@ -490,6 +516,7 @@ class EchoFillToVolume(AbstractEchoAction):
         _cache_key=None,
     ) -> list[DecimalQuantity]:
         _cache_key = gen_random_hash() if _cache_key is None else _cache_key
+        self._raise_if_other_determiner(actions)
         othervol = sum(
             [
                 a.tx_volume(mix_volume, actions, _cache_key=_cache_key)
@@ -546,9 +573,6 @@ class EchoFillToVolume(AbstractEchoAction):
                 self.components,
             )
         ]
-
-    def mix_volume_effect(self, _cache_key=None) -> (MixVolumeDep, DecimalQuantity):
-        return (MixVolumeDep.DETERMINES, self.target_total_volume)
 
 # class EchoTwoStepConcentration(ActionWithComponents):
 #     """Use an intermediate mix to obtain a target concentration."""

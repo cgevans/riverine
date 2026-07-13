@@ -34,10 +34,10 @@ or `Q_("55.3", "nM")`, and these values can be used with normal arithmetic opera
       [
          MultiFixedConcentration(strands, "1 µM"),
          FixedConcentration(strand_individual, "2 µM"),
-         FixedConcentration(mg, "125 mM")
+         FixedConcentration(mg, "125 mM"),
+         PipetteFillToVolume("Buffer", "100 µL")
       ],
-      name = "mix_with_concentrations",
-      fixed_total_volume = "100 µL"
+      name = "mix_with_concentrations"
    )
 
    mix2 = Mix(

@@ -9,6 +9,13 @@ norecursedirs = [
     "build",
     ".tox"]
 testpaths = ["tests"]
+filterwarnings = [
+    # During the deprecation period, legacy tests still exercise the
+    # fixed_total_volume=/buffer_name= API.  Silence the warning by default;
+    # dedicated tests assert it with pytest.warns, and it can be surfaced with
+    # `pytest -W error::riverine._warnings.RiverineDeprecationWarning`.
+    "ignore::riverine._warnings.RiverineDeprecationWarning",
+]
 
 [project]
 name = "riverine"
@@ -53,7 +60,7 @@ docs = [
     "matplotlib",
     "sphinx-book-theme",
     "sphinx-autoapi",
-    "myst-parser"
+    "myst-nb"
     ]
 testing = [
     "setuptools",

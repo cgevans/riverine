@@ -24,15 +24,18 @@ import pint
 from tabulate import TableFormat, tabulate
 import polars as pl
 
-from .echo import EchoFillToVolume
+from .echo import AbstractEchoAction, EchoFillToVolume
 
 from .actions import (
     AbstractAction,  # Fixme: should not need special cases
+    AbstractFillToVolume,
     FixedConcentration,
     FixedVolume,
     MixVolumeDep,
+    PipetteFillToVolume,
     FillToVolume,
 )
+from ._warnings import _warn_deprecated
 from .components import AbstractComponent, Component
 from .dictstructure import _STRUCTURE_CLASSES, _structure, _unstructure
 from .locations import PlateType, WellPos, _parse_wellpos_optional
@@ -172,60 +175,181 @@ class Mix(AbstractComponent):
     )
 
     def __init__(self, *args, **kwargs):
-        if "fixed_total_volume" in kwargs:
-            p = kwargs.pop("fixed_total_volume")
-            if p is None:
-                ftv = None
-            else:
-                ftv = _parse_vol_optional(p)
-        else:
-            ftv = None    
-        if "buffer_name" in kwargs:
-            buffer_name = kwargs.pop("buffer_name")
-        else:
-            buffer_name = "Buffer"
+        ftv_given = "fixed_total_volume" in kwargs
+        p = kwargs.pop("fixed_total_volume", None)
+        ftv = _parse_vol_optional(p) if p is not None else None
+
+        buffer_name_given = "buffer_name" in kwargs
+        buffer_name = kwargs.pop("buffer_name", "Buffer")
+
         self.__attrs_init__(*args, **kwargs)
+
+        if ftv_given or buffer_name_given:
+            _warn_deprecated(
+                "The fixed_total_volume= and buffer_name= arguments to Mix are "
+                "deprecated; add a PipetteFillToVolume / EchoFillToVolume action "
+                "to `actions` instead."
+            )
+            self._apply_deprecated_volume_kwargs(
+                ftv, ftv_given, buffer_name, buffer_name_given
+            )
+
+    def _apply_deprecated_volume_kwargs(
+        self,
+        ftv: DecimalQuantity | None,
+        ftv_given: bool,
+        buffer_name: str,
+        buffer_name_given: bool,
+    ) -> None:
+        """Apply the deprecated ``fixed_total_volume=``/``buffer_name=`` kwargs.
+
+        Composes with an existing fill action where possible (an action naming a
+        buffer with no target gets its target from ``fixed_total_volume=``), and
+        raises a clear error when the total volume would be set in two places.
+        """
+        det = self._determining_action()
+
+        if det is None:
+            if ftv is not None:
+                if any(isinstance(a, AbstractEchoAction) for a in self.actions):
+                    _warn_deprecated(
+                        "fixed_total_volume= adds a manual PipetteFillToVolume, but "
+                        "this mix otherwise uses Echo actions; add an "
+                        "EchoFillToVolume action for an Echo protocol instead."
+                    )
+                self.actions.append(
+                    PipetteFillToVolume(
+                        buffer_name if buffer_name_given else "Buffer", ftv
+                    )
+                )
+            elif buffer_name_given:
+                _warn_deprecated(
+                    "buffer_name= was given but the mix has no fill action and no "
+                    "fixed_total_volume=, so it has no effect.  Add a "
+                    "PipetteFillToVolume / EchoFillToVolume action instead."
+                )
+            return
+
+        is_fill = isinstance(det, AbstractFillToVolume)
+
         if ftv is not None:
-            if not any(action.mix_volume_effect()[0] == MixVolumeDep.DETERMINES for action in self.actions):
-                self.actions.append(FillToVolume(buffer_name, ftv))
-            else:
-                raise ValueError("If fixed_total_volume is specified, it must be the only action that determines the total volume.")
+            if not (is_fill and isnan(det.target_total_volume.m)):
+                raise ValueError(
+                    "The mix's total volume is already determined by "
+                    f"{type(det).__name__}({det.name}); remove the deprecated "
+                    "fixed_total_volume= argument and set the volume on that "
+                    "action instead."
+                )
+
+        # Validate every conflicting input before mutating the caller-provided
+        # action.  A failed Mix construction must not leave that action changed.
+        if buffer_name_given and is_fill:
+            existing = det.components[0].name
+            if existing != buffer_name:
+                raise ValueError(
+                    f'The fill action already uses buffer "{existing}", but '
+                    f'buffer_name="{buffer_name}" was also given.  Set the '
+                    "buffer on the fill action only, and drop buffer_name=."
+                )
+
+        if ftv is not None:
+            # Composition: the action names the buffer, the kwarg supplies the
+            # volume.
+            det.target_total_volume = ftv
+
+        if buffer_name_given and not is_fill:
+            _warn_deprecated(
+                "buffer_name= was given but the determining action is not a "
+                "fill; it has no effect."
+            )
 
     @property
     def is_mix(self) -> bool:
         return True
 
-    @property
-    def fixed_total_volume(self) -> DecimalQuantity:
-        for action in self.actions:
-            if action.mix_volume_effect()[0] == MixVolumeDep.DETERMINES:
-                return action.mix_volume_effect()[1]
+    def _determining_action(self) -> AbstractAction | None:
+        """The single action that determines the mix's total volume, if any.
+
+        Internal, non-warning accessor.
+        """
+        determining = [
+            action
+            for action in self.actions
+            if action.mix_volume_effect()[0] == MixVolumeDep.DETERMINES
+        ]
+        if len(determining) > 1:
+            raise ValueError(
+                "A mix can have at most one action that determines its total "
+                "volume, but these do: "
+                + ", ".join(f"{type(a).__name__}({a.name})" for a in determining)
+                + ".  Keep a single PipetteFillToVolume / EchoFillToVolume action."
+            )
+        return determining[0] if determining else None
+
+    def _get_fixed_total_volume(self) -> DecimalQuantity:
+        """The mix's fixed total volume, or NaN if none.  Non-warning accessor."""
+        action = self._determining_action()
+        if action is not None:
+            return action.mix_volume_effect()[1]
         return NAN_VOL
 
-    @fixed_total_volume.setter
-    def fixed_total_volume(self, value: DecimalQuantity):
-        # FIXME: modify existing FillToVolume if it exists
-        for action in self.actions:
-            if action.mix_volume_effect()[0] == MixVolumeDep.DETERMINES:
-                action.target_total_volume = value # FIXME: typing weirdness
-                return
-        self.actions.append(FillToVolume("Buffer", value))
+    def _set_fixed_total_volume(self, value: DecimalQuantity) -> None:
+        """Set the total volume on the determining fill, or add one.  Non-warning."""
+        action = self._determining_action()
+        if action is not None:
+            action.target_total_volume = value  # type: ignore[attr-defined]
+            return
+        self.actions.append(PipetteFillToVolume(self._get_buffer_name(), value))
 
-
-    @property
-    def buffer_name(self) -> str:
+    def _get_buffer_name(self) -> str:
+        """The name of the buffer/fill component, or "Buffer".  Non-warning accessor."""
         for action in self.actions:
-            if isinstance(action, FillToVolume):
+            if isinstance(action, AbstractFillToVolume):
                 return action.name
         return "Buffer"
 
+    def _set_buffer_name(self, value: str) -> None:
+        """Rename the buffer of the determining fill, or add a fill.  Non-warning."""
+        action = self._determining_action()
+        if action is not None:
+            action.components[0].name = value
+            return
+        # No fill action yet: add one with an unset target (naming the buffer
+        # without determining a volume).  Do NOT use a zero volume, which would
+        # incorrectly fix the total volume at zero.
+        self.actions.append(PipetteFillToVolume(value))
+
+    @property
+    def fixed_total_volume(self) -> DecimalQuantity:
+        _warn_deprecated(
+            "Mix.fixed_total_volume is deprecated; read the target from the "
+            "mix's PipetteFillToVolume / EchoFillToVolume action instead."
+        )
+        return self._get_fixed_total_volume()
+
+    @fixed_total_volume.setter
+    def fixed_total_volume(self, value: DecimalQuantity):
+        _warn_deprecated(
+            "Setting Mix.fixed_total_volume is deprecated; add or modify a "
+            "PipetteFillToVolume / EchoFillToVolume action instead."
+        )
+        self._set_fixed_total_volume(value)
+
+    @property
+    def buffer_name(self) -> str:
+        _warn_deprecated(
+            "Mix.buffer_name is deprecated; read the component from the mix's "
+            "PipetteFillToVolume / EchoFillToVolume action instead."
+        )
+        return self._get_buffer_name()
+
     @buffer_name.setter
     def buffer_name(self, value: str):
-        for action in self.actions:
-            if action.mix_volume_effect()[0] == MixVolumeDep.DETERMINES:
-                action.components[0].name = value
-                return
-        self.actions.append(FillToVolume(value, ZERO_VOL))
+        _warn_deprecated(
+            "Setting Mix.buffer_name is deprecated; set the component on a "
+            "PipetteFillToVolume / EchoFillToVolume action instead."
+        )
+        self._set_buffer_name(value)
 
     def __eq__(self, other: object) -> bool:
         if type(self) is not type(other):
@@ -254,6 +378,15 @@ class Mix(AbstractComponent):
             raise ValueError(
                 "Mix.actions must contain at least one action, but it is empty"
             )
+        self._check_single_determiner()
+
+    def _check_single_determiner(self) -> None:
+        """Ensure at most one action determines the mix's total volume.
+
+        More than one determining action (e.g. two fills) is ambiguous and,
+        left unchecked, makes fill volumes mutually recursive.
+        """
+        self._determining_action()
 
     def printed_name(self, tablefmt: str | TableFormat) -> str:
         return self.name + (
@@ -301,10 +434,9 @@ class Mix(AbstractComponent):
     
     @maybe_cache_once
     def _get_total_volume(self, _cache_key=None) -> DecimalQuantity:
-        if self.fixed_total_volume is not None and not (
-            isnan(self.fixed_total_volume.m)
-        ):
-            return self.fixed_total_volume
+        _ftv = self._get_fixed_total_volume()
+        if _ftv is not None and not isnan(_ftv.m):
+            return _ftv
         else:
             return compute_total_volume(
                 [action.mix_volume_effect(_cache_key=_cache_key) for action in self.actions]
@@ -409,7 +541,7 @@ class Mix(AbstractComponent):
         return any(isinstance(action, FixedConcentration) for action in self.actions)
 
     def has_fixed_total_volume(self) -> bool:
-        return not isnan(self.fixed_total_volume.m)
+        return not isnan(self._get_fixed_total_volume().m)
 
     def validate(
         self,
@@ -443,7 +575,7 @@ class Mix(AbstractComponent):
                     continue
                 if isinstance(component, Mix):
                     intermediate_mixes.append(
-                        (component.name, component.fixed_total_volume, volume)
+                        (component.name, component._get_fixed_total_volume(), volume)
                     )
 
         error_list = _validate_mix(
@@ -452,7 +584,7 @@ class Mix(AbstractComponent):
             min_volume=self.min_volume,
             has_fixed_concentration_action=self.has_fixed_concentration_action(),
             has_fixed_total_volume=self.has_fixed_total_volume(),
-            buffer_name=self.buffer_name,
+            buffer_name=self._get_buffer_name(),
             intermediate_mixes=intermediate_mixes,
         )
 
@@ -465,7 +597,7 @@ class Mix(AbstractComponent):
                 if ((mixline.note is None) or ("ECHO" not in mixline.note))
                 else False  # FIXME
             ):
-                if mixline.names == [self.buffer_name]:
+                if mixline.names == [self._get_buffer_name()]:
                     msg = (
                         f'Negative buffer volume of mix "{self.name}"; '
                         f"this is typically caused by requesting too large a target concentration in a "
@@ -1380,8 +1512,8 @@ def split_mix(
                 compact_display=action.compact_display,
             )
             new_actions[i] = large_fixed_volume_action
-        if isinstance(action, FillToVolume):
-            large_fill_to_volume_action = FillToVolume(
+        if isinstance(action, PipetteFillToVolume):
+            large_fill_to_volume_action = PipetteFillToVolume(
                 components=action.components,
                 target_total_volume=large_volume,
             )
@@ -1503,7 +1635,7 @@ def compute_shared_actions(
             if comp.name in exclude_shared_components:
                 contains_excluded_components = True
                 break
-        if not contains_excluded_components and (not exclude_fills or not isinstance(action, FillToVolume)):
+        if not contains_excluded_components and (not exclude_fills or not isinstance(action, AbstractFillToVolume)):
             shared_actions_excluded.append(action)
     shared_actions = shared_actions_excluded
 
@@ -1546,11 +1678,11 @@ def verify_mixes_for_master_mix(mixes: Iterable[Mix]) -> None:
                 f"total volume {mix.total_volume} whereas mix {first_mix.name} has "
                 f"total volume {first_mix.total_volume}"
             )
-        if mix.buffer_name != first_mix.buffer_name:
+        if mix._get_buffer_name() != first_mix._get_buffer_name():
             raise ValueError(
                 f"must have same buffer name in all mixes, but mix {mix.name} has "
-                f'buffer name "{mix.buffer_name}" whereas mix {first_mix.name} has '
-                f"buffer name {first_mix.buffer_name}"
+                f'buffer name "{mix._get_buffer_name()}" whereas mix {first_mix.name} has '
+                f"buffer name {first_mix._get_buffer_name()}"
             )
 
     # only handling FixedVolume and FixedConcentration actions for now
@@ -1612,9 +1744,9 @@ def master_mix(
                 FixedConcentration(components=[m13], fixed_concentration=f"1 nM"),
                 FixedConcentration(components=[staple_mix], fixed_concentration=f"10 nM"),
                 FixedConcentration(components=[adapter_mixes[adp_idx]], fixed_concentration=f"10 nM"),
+                PipetteFillToVolume("Buffer", "100 uL"),
             ],
             name="mm",
-            fixed_total_volume=f"100 uL",
         ) for adp_idx, adapter_mix in adapter_mixes.items()]
         mm, final_mixes = master_mix(mixes=mixes, name='origami master mix', excess=0.1)
 
@@ -1752,11 +1884,12 @@ def master_mix(
     small_shared_mix = Mix(
         actions=shared_actions,
         name=name,
-        fixed_total_volume=volume_shared_actions_and_buffer,
-        buffer_name=first_mix.buffer_name,
         reference=first_mix.reference,
         min_volume=first_mix.min_volume,
     )
+    # Set the volume first (adds a fill if absent), then name its buffer.
+    small_shared_mix._set_fixed_total_volume(volume_shared_actions_and_buffer)
+    small_shared_mix._set_buffer_name(first_mix._get_buffer_name())
 
     names = [mix.name for mix in mixes]
     mas_mix = split_mix(mix=small_shared_mix, names=names, excess=excess)
@@ -1776,8 +1909,8 @@ def master_mix(
             reference=orig_mix.reference,
             min_volume=orig_mix.min_volume,
         )
-        new_mix.fixed_total_volume = orig_mix.total_volume
-        new_mix.buffer_name = orig_mix.buffer_name
+        new_mix._set_fixed_total_volume(orig_mix.total_volume)
+        new_mix._set_buffer_name(orig_mix._get_buffer_name())
         new_mixes.append(new_mix)
 
     return mas_mix, new_mixes

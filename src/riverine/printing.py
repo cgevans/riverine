@@ -16,7 +16,7 @@ from .units import VolumeError
 def emphasize(text: str, tablefmt: str | TableFormat, strong: bool = False) -> str:
     """
     Emphasizes `text` according to `tablefmt`, e.g., for Markdown (e.g., `tablefmt` = `'pipe'`),
-    surrounds with pair of *'s; if `strong` is True, with double *'s. For `tablefmt` = `'html'`,
+    surrounds with a pair of ``*`` characters; if `strong` is True, with double ``*``. For `tablefmt` = `'html'`,
     uses ``<emph>`` or ``<strong>``.
 
     Parameters
