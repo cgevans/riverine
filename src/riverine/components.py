@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from math import isnan
-from typing import TYPE_CHECKING, Any, Sequence, Tuple, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Mapping, Sequence, Tuple, TypeVar, cast
 
 import attrs
 import pandas as pd
@@ -33,7 +33,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 T = TypeVar("T")
 
-__all__ = ["AbstractComponent", "Component", "Strand"]
+__all__ = ["AbstractComponent", "Component", "Strand", "StoredMix"]
 
 
 class AbstractComponent(ABC):
@@ -399,6 +399,210 @@ def _maybesequence_comps(
     return [object_or_sequence]
 
 
+def _parse_stored_contents(
+    value: Mapping[str, Any] | Sequence[AbstractComponent | str] | AbstractComponent | str,
+) -> list[AbstractComponent]:
+    if isinstance(value, Mapping):
+        out: list[AbstractComponent] = []
+        for k, v in value.items():
+            if isinstance(v, AbstractComponent):
+                out.append(v)
+            else:
+                out.append(Component(k, v))
+        return out
+    return _maybesequence_comps(value)
+
+
+@attrs.define()
+class StoredMix(AbstractComponent):
+    """A physical stock whose contents are known, used as a single source.
+
+    Examples are a strand already in a buffer, or a mix of many strands kept in a
+    freezer.  Unlike a :any:`Mix`, a StoredMix is defined by its contents rather
+    than by a recipe for making it.  When it is used as a source in a mix, each of
+    its contents is added to that mix, but the volume drawn is consumed from the
+    stock itself, not from the contents.
+
+    A buffer or solvent the stock is in is given as one of the contents, the same
+    as any other component; if it has a concentration it is tracked in mixes the
+    stock is used in.
+
+    Parameters
+    ----------
+
+    name:
+        Name of the stock (for example, a tube label).
+
+    contents:
+        The components in the stock, each with a concentration.  May be given as a
+        mapping of name to concentration, or as a sequence of components.
+
+    fixed_concentration:
+        Sets the effective source concentration.  A quantity gives it directly.  A
+        string names one of the contents, whose concentration is used.  If not
+        given, the concentration of the first content is used.
+    """
+
+    name: str  # type: ignore
+    contents: list[AbstractComponent] = attrs.field(
+        converter=_parse_stored_contents,
+        on_setattr=attrs.setters.convert,
+    )
+    fixed_concentration: str | DecimalQuantity | None = attrs.field(
+        default=None, kw_only=True
+    )
+    plate: str | None = attrs.field(default=None, kw_only=True)
+    well: WellPos | None = attrs.field(
+        converter=_parse_wellpos_optional,
+        default=None,
+        kw_only=True,
+        on_setattr=attrs.setters.convert,
+    )
+    volume: DecimalQuantity = attrs.field(  # type: ignore
+        converter=_parse_vol_optional,
+        default=NAN_VOL,
+        kw_only=True,
+        on_setattr=attrs.setters.convert,
+        eq=norm_nan_for_eq,
+    )
+
+    @property
+    def location(self) -> tuple[str | None, WellPos | None]:  # type: ignore
+        return (self.plate, self.well)
+
+    @property
+    def concentration(self) -> DecimalQuantity:
+        return self._get_concentration()
+
+    def _get_concentration(self, _cache_key=None) -> DecimalQuantity:
+        fc = self.fixed_concentration
+        if isinstance(fc, ureg.Quantity):
+            return fc
+        if isinstance(fc, str):
+            for c in self.contents:
+                if c.name == fc:
+                    return c.concentration
+            raise ValueError(
+                f"fixed_concentration {fc!r} is not the name of a content of {self.name}."
+            )
+        if self.contents:
+            return self.contents[0].concentration
+        return NAN_CONC
+
+    def _get_name(self, _cache_key=None) -> str:
+        return self.name
+
+    def all_components_polars(self, _cache_key=None) -> pl.DataFrame:
+        frames = [c.all_components_polars(_cache_key=_cache_key) for c in self.contents]
+        if not frames:
+            return pl.DataFrame(
+                schema={
+                    "name": pl.String,
+                    "concentration_nM": pl.Decimal(scale=6),
+                    "component": pl.Object,
+                }
+            )
+        return pl.concat(frames)
+
+    def all_components(self) -> pd.DataFrame:
+        df = self.all_components_polars().to_pandas()
+        df.set_index("name", inplace=True)
+        return df
+
+    def _update_volumes(
+        self,
+        consumed_volumes: dict[str, DecimalQuantity] | None = None,
+        made_volumes: dict[str, DecimalQuantity] | None = None,
+        _cache_key=None,
+    ) -> Tuple[dict[str, DecimalQuantity], dict[str, DecimalQuantity]]:
+        if consumed_volumes is None:
+            consumed_volumes = {}
+        if made_volumes is None:
+            made_volumes = {}
+        if self.name in made_volumes:
+            return consumed_volumes, made_volumes
+        made_volumes[self.name] = (
+            self.volume if not isnan(self.volume.m) else ZERO_VOL
+        )
+        consumed_volumes.setdefault(self.name, ZERO_VOL)
+        return consumed_volumes, made_volumes
+
+    def with_experiment(
+        self: StoredMix, experiment: Experiment, inplace: bool = True
+    ) -> AbstractComponent:
+        if self.name in experiment.components:
+            return experiment.components[self.name]
+        return self
+
+    def with_reference(
+        self: StoredMix, reference: Reference, inplace: bool = False
+    ) -> StoredMix:
+        new_contents = [
+            c.with_reference(reference, inplace=inplace) for c in self.contents
+        ]
+        if inplace:
+            self.contents = new_contents
+            return self
+        return attrs.evolve(self, contents=new_contents)
+
+    @classmethod
+    def from_mix(
+        cls,
+        mix: Any,
+        *,
+        name: str | None = None,
+        volume: DecimalQuantity | str | None = None,
+        plate: str | None = None,
+        well: str | WellPos | None = None,
+    ) -> StoredMix:
+        """Build a StoredMix from an existing :any:`Mix`, capturing its final
+        components and their concentrations as the stock contents."""
+        contents: list[AbstractComponent] = []
+        for nm, row in mix.all_components().iterrows():
+            conc_nM = row["concentration_nM"]
+            conc = NAN_CONC if conc_nM is None else Q_(conc_nM, nM)
+            base = row["component"]
+            if isinstance(base, Strand):
+                contents.append(
+                    Strand(nm, concentration=conc, sequence=base.sequence)
+                )
+            else:
+                contents.append(Component(nm, concentration=conc))
+        return cls(
+            name if name is not None else mix.name,
+            contents,
+            plate=plate,
+            well=well,
+            volume=volume if volume is not None else NAN_VOL,
+        )
+
+    def _unstructure(self, experiment: Experiment | None = None) -> dict[str, Any]:
+        d: dict[str, Any] = {"class": self.__class__.__name__, "name": self.name}
+        d["contents"] = [c._unstructure(experiment) for c in self.contents]
+        if self.fixed_concentration is not None:
+            d["fixed_concentration"] = _unstructure(self.fixed_concentration)
+        if self.plate is not None:
+            d["plate"] = self.plate
+        if self.well is not None:
+            d["well"] = _unstructure(self.well)
+        if not isnan(self.volume.m):
+            d["volume"] = _unstructure(self.volume)
+        return d
+
+    @classmethod
+    def _structure(
+        cls, d: dict[str, Any], experiment: Experiment | None = None
+    ) -> StoredMix:
+        d = dict(d)
+        d.pop("class", None)
+        d["contents"] = [_structure(c, experiment) for c in d.get("contents", [])]
+        for k in list(d):
+            if k in ("contents", "name"):
+                continue
+            d[k] = _structure(d[k], experiment)
+        return cls(**d)
+
+
 def _empty_components() -> pd.DataFrame:
     cps = pd.DataFrame(
         index=pd.Index([], name="name"),
@@ -408,5 +612,5 @@ def _empty_components() -> pd.DataFrame:
     return cps
 
 
-for c in [Component, Strand]:
+for c in [Component, Strand, StoredMix]:
     _STRUCTURE_CLASSES[c.__name__] = c

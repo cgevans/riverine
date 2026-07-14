@@ -13,7 +13,7 @@ from .actions import (
     FillToVolume,
 )
 from ._warnings import RiverineDeprecationWarning
-from .components import AbstractComponent, Component, Strand
+from .components import AbstractComponent, Component, Strand, StoredMix
 from .experiments import Experiment
 from .locations import WellPos
 from .mixes import Mix, MixLine, master_mix, split_mix
@@ -37,6 +37,7 @@ __all__ = [
     "ureg",
     "Component",
     "Strand",
+    "StoredMix",
     "Experiment",
     "FixedVolume",
     "FixedConcentration",
