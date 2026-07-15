@@ -174,6 +174,7 @@ def validate_mix(
     has_fixed_total_volume: bool,
     buffer_name: str,
     intermediate_mixes: list[tuple[str, DecimalQuantity, DecimalQuantity]],
+    min_volume_exemptions: Sequence[bool] | None = None,
 ) -> list[VolumeError]:
     """All validation checks on a solved mix.
 
@@ -193,6 +194,9 @@ def validate_mix(
         Name of the buffer component.
     intermediate_mixes
         List of (mix_name, mix_fixed_total_vol, needed_vol) for intermediate mix checks.
+    min_volume_exemptions
+        Optional flags, one per mixline, for transfers that do not use the mix's
+        manual-pipette minimum volume (for example, Echo acoustic transfers).
     """
     ntx = [(n, v) for n, v in mixline_names_vols if v is not None]
     error_list: list[VolumeError] = []
@@ -227,7 +231,18 @@ def validate_mix(
             )
         )
 
-    for names, vol in [(n, v) for n, v in ntx if v is not None]:
+    if min_volume_exemptions is None:
+        min_volume_exemptions = [False] * len(mixline_names_vols)
+    elif len(min_volume_exemptions) != len(mixline_names_vols):
+        raise ValueError(
+            "min_volume_exemptions must contain one flag per mixline."
+        )
+
+    for (names, vol), min_volume_exempt in zip(
+        mixline_names_vols, min_volume_exemptions
+    ):
+        if vol is None or min_volume_exempt:
+            continue
         if math.isnan(vol.m) or vol == ZERO_VOL:
             continue
         if vol < min_volume:

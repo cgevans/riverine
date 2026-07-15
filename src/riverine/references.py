@@ -269,6 +269,41 @@ class Reference:
                     #    raise ValueError
                     filetype = "plates-order"
                     for k, v in data.items():
+                        # IDT has emitted several harmless variants of these
+                        # headings (for example ``name`` and ``Well``).  Treat
+                        # headings case-insensitively and strip surrounding
+                        # whitespace while retaining the worksheet name as the
+                        # plate identifier.
+                        canonical_columns = {
+                            "well": "Well",
+                            "well position": "Well",
+                            "name": "Name",
+                            "sequence name": "Name",
+                            "sequence": "Sequence",
+                            "plate": "Plate",
+                        }
+                        renamed = {
+                            column: canonical_columns.get(
+                                str(column).strip().casefold(), str(column).strip()
+                            )
+                            for column in v.columns
+                        }
+                        v.rename(columns=renamed, inplace=True)
+                        missing = {"Well", "Name", "Sequence"} - set(v.columns)
+                        if missing:
+                            raise ValueError(
+                                f"IDT order sheet {k!r} is missing required "
+                                f"column(s): {', '.join(sorted(missing))}."
+                            )
+                        for column in ("Well", "Name", "Sequence", "Plate"):
+                            if column in v.columns:
+                                v[column] = v[column].map(
+                                    lambda value: value.strip()
+                                    if isinstance(value, str)
+                                    else value
+                                )
+                        v.replace(r"^\s*$", np.nan, regex=True, inplace=True)
+                        v.dropna(subset=["Name", "Sequence"], how="all", inplace=True)
                         if "Plate" in v.columns:
                             # There's already a plate column.  That's problematic.  Let's check,
                             # then delete it.

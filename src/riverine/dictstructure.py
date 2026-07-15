@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from .locations import WellPos
@@ -35,6 +36,8 @@ def _structure(x: dict[str, Any], experiment: Experiment | None = None) -> Any:
 
 def _unstructure(x: Any) -> Any:
     if isinstance(x, ureg.Quantity):
+        return str(x)
+    elif isinstance(x, Decimal):
         return str(x)
     elif isinstance(x, list):
         return [_unstructure(y) for y in x]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from abc import ABCMeta
+from decimal import Decimal
 from typing import TYPE_CHECKING, Literal, Sequence, cast
 
 import attrs
@@ -29,6 +30,7 @@ from .units import (
     NAN_VOL,
     Q_,
     DecimalQuantity,
+    VolumeError,
     _parse_conc_required,
     _parse_vol_optional,
     _parse_vol_required,
@@ -49,10 +51,144 @@ except ImportError as err:
 
 
 DEFAULT_DROPLET_VOL = Q_(25, "nL")
+DEFAULT_RTOL = Decimal("0.01")
+
+
+def _parse_rtol(value: Decimal | float | int | str | DecimalQuantity) -> Decimal:
+    """Parse a nonnegative, dimensionless relative tolerance."""
+    if isinstance(value, Decimal):
+        result = value
+    elif isinstance(value, (float, int)) and not isinstance(value, bool):
+        result = Decimal(str(value))
+    elif isinstance(value, (str, DecimalQuantity)):
+        quantity = Q_(value) if isinstance(value, str) else value
+        if not quantity.dimensionless:
+            raise ValueError("rtol must be dimensionless (a fraction or percentage).")
+        result = Decimal(quantity.to("").m)
+    else:
+        raise ValueError("rtol must be a fraction or percentage.")
+
+    if not result.is_finite() or result < 0:
+        raise ValueError("rtol must be finite and nonnegative.")
+    return result
+
+
+def _parse_atol(
+    value: str | DecimalQuantity | int | None,
+) -> DecimalQuantity | None:
+    """Parse an absolute tolerance, leaving its units target-dependent."""
+    if value is None:
+        return None
+    if value == 0:
+        return Q_(0)
+    if isinstance(value, str):
+        result = Q_(value)
+    elif isinstance(value, DecimalQuantity):
+        result = value
+    else:
+        raise ValueError("atol must be a quantity with units (or zero).")
+    if not Decimal(result.m).is_finite() or result.m < 0:
+        raise ValueError("atol must be finite and nonnegative.")
+    return result
+
+
+def _parse_droplet_volume(value: str | DecimalQuantity) -> DecimalQuantity:
+    result = _parse_vol_required(value)
+    if not Decimal(result.m).is_finite() or result.m <= 0:
+        raise ValueError("droplet_volume must be finite and greater than zero.")
+    if result == DEFAULT_DROPLET_VOL:
+        return DEFAULT_DROPLET_VOL
+    return result
 
 
 class AbstractEchoAction(ActionWithComponents, metaclass=ABCMeta):
-    """Abstract base class for Echo actions."""
+    """Abstract base class for Echo actions.
+
+    ``rtol`` is a dimensionless relative tolerance and defaults to 1%.  It may
+    be supplied as a fraction or percentage string.  ``atol`` defaults to zero
+    and must use units appropriate to the concrete action's target: volume for
+    a fill and concentration for a concentration-targeting action.
+    """
+
+    rtol: Decimal
+    atol: DecimalQuantity | None
+
+    def _realized_mix_volume(
+        self,
+        mix_vol: DecimalQuantity,
+        actions: Sequence[AbstractAction],
+        _cache_key=None,
+    ) -> DecimalQuantity:
+        """Return the volume physically delivered after Echo quantization."""
+        if not actions:
+            return mix_vol
+        return sum(
+            (
+                action.tx_volume(
+                    mix_vol, actions, _cache_key=_cache_key
+                )
+                for action in actions
+            ),
+            Q_(0, "uL"),
+        )
+
+    def _absolute_tolerance(
+        self, target: DecimalQuantity
+    ) -> DecimalQuantity:
+        if self.atol is None or (self.atol.dimensionless and self.atol.m == 0):
+            return Q_(0, target.units)
+        try:
+            return self.atol.to(target.units)
+        except Exception as error:
+            raise ValueError(
+                f"atol {self.atol} is incompatible with target {target}."
+            ) from error
+
+    def _target_error(
+        self,
+        *,
+        label: str,
+        actual: DecimalQuantity,
+        target: DecimalQuantity,
+    ) -> VolumeError | None:
+        if math.isnan(actual.m) or math.isnan(target.m):
+            return None
+        try:
+            difference = abs(actual - target)
+            allowed = self._absolute_tolerance(target) + abs(target) * self.rtol
+        except ValueError as error:
+            return VolumeError(f"{type(self).__name__} {error}")
+        if difference <= allowed:
+            return None
+        return VolumeError(
+            f"{type(self).__name__} for {label} is outside its Echo "
+            f"quantization tolerance: target {target}, realized {actual}, "
+            f"error {difference}, allowed {allowed}, droplet volume "
+            f"{self.droplet_volume}."
+        )
+
+    def quantization_errors(
+        self,
+        mix_vol: DecimalQuantity,
+        actions: Sequence[AbstractAction],
+        _cache_key=None,
+    ) -> list[VolumeError]:
+        """Return validation errors caused by invalid quantized transfers."""
+        errors: list[VolumeError] = []
+        for component, volume in zip(
+            self.components,
+            self.each_volumes(
+                mix_vol, actions, _cache_key=_cache_key
+            ),
+        ):
+            if not math.isnan(volume.m) and volume.m < 0:
+                errors.append(
+                    VolumeError(
+                        f"{type(self).__name__} for {component.name} produced "
+                        f"a negative Echo transfer of {volume}."
+                    )
+                )
+        return errors
 
     @maybe_cache_once
     def to_picklist(self, mix: Mix, experiment: Experiment | None = None, _cache_key=None) -> PickList:
@@ -62,6 +198,11 @@ class AbstractEchoAction(ActionWithComponents, metaclass=ABCMeta):
             return experiment.locations.get(key, None)
 
         mix_vol = mix._get_total_volume(_cache_key=_cache_key)
+        quantization_errors = self.quantization_errors(
+            mix_vol, mix.actions, _cache_key=_cache_key
+        )
+        if quantization_errors:
+            raise VolumeError("\n".join(str(error) for error in quantization_errors))
         dconcs = self.dest_concentrations(mix_vol, mix.actions, _cache_key=_cache_key)
         eavols = self.each_volumes(mix_vol, mix.actions, _cache_key=_cache_key)
 
@@ -140,7 +281,7 @@ class AbstractEchoAction(ActionWithComponents, metaclass=ABCMeta):
                     "Source Plate Type": pl.String,
                 },
                 # , schema_overrides={"Source Concentration": pl.Decimal(scale=6), "Destination Concentration": pl.Decimal(scale=6), "Transfer Volume": pl.Decimal(scale=6)} # FIXME: when new polars is released
-            )
+            ).filter(pl.col("Transfer Volume") != 0)
         )
         return locdf
 
@@ -151,7 +292,9 @@ class EchoFixedVolume(AbstractEchoAction):
 
     fixed_volume: DecimalQuantity = attrs.field(converter=_parse_vol_required)
     set_name: str | None = None
-    droplet_volume: DecimalQuantity = DEFAULT_DROPLET_VOL
+    droplet_volume: DecimalQuantity = attrs.field(
+        default=DEFAULT_DROPLET_VOL, converter=_parse_droplet_volume
+    )
     compact_display: bool = True
 
     def _check_volume(self) -> None:
@@ -163,6 +306,21 @@ class EchoFixedVolume(AbstractEchoAction):
                 f"Fixed volume {fv} is not an integer multiple of droplet volume {dv}."
             )
 
+    def quantization_errors(
+        self,
+        mix_vol: DecimalQuantity,
+        actions: Sequence[AbstractAction],
+        _cache_key=None,
+    ) -> list[VolumeError]:
+        errors = super().quantization_errors(
+            mix_vol, actions, _cache_key=_cache_key
+        )
+        try:
+            self._check_volume()
+        except ValueError as error:
+            errors.append(VolumeError(f"EchoFixedVolume: {error}"))
+        return errors
+
     @maybe_cache_once
     def dest_concentrations(
         self,
@@ -171,11 +329,19 @@ class EchoFixedVolume(AbstractEchoAction):
         _cache_key=None,
     ) -> list[DecimalQuantity]:
         _cache_key = gen_random_hash() if _cache_key is None else _cache_key
+        realized_mix_vol = self._realized_mix_volume(
+            mix_vol, actions, _cache_key=_cache_key
+        )
         return [
             x * y
             for x, y in zip(
                 self._get_source_concentrations(_cache_key=_cache_key),
-                _ratio(self.each_volumes(mix_vol, _cache_key=_cache_key), mix_vol),
+                _ratio(
+                    self.each_volumes(
+                        mix_vol, actions, _cache_key=_cache_key
+                    ),
+                    realized_mix_vol,
+                ),
             )
         ]
 
@@ -258,11 +424,19 @@ class EchoEqualTargetConcentration(AbstractEchoAction):
 
     fixed_volume: DecimalQuantity = attrs.field(converter=_parse_vol_required)
     set_name: str | None = None
-    droplet_volume: DecimalQuantity = DEFAULT_DROPLET_VOL
+    droplet_volume: DecimalQuantity = attrs.field(
+        default=DEFAULT_DROPLET_VOL, converter=_parse_droplet_volume
+    )
     compact_display: bool = False
     method: (
         Literal["max_volume", "min_volume", "check"] | tuple[Literal["max_fill"], str]
     ) = "min_volume"
+    rtol: Decimal = attrs.field(
+        default=DEFAULT_RTOL, converter=_parse_rtol, kw_only=True
+    )
+    atol: DecimalQuantity | None = attrs.field(
+        default=None, converter=_parse_atol, kw_only=True
+    )
 
     def _check_volume(self) -> None:
         fv = self.fixed_volume.m_as("nL")
@@ -280,13 +454,63 @@ class EchoEqualTargetConcentration(AbstractEchoAction):
         actions: Sequence[AbstractAction] = (),
         _cache_key=None,
     ) -> list[DecimalQuantity]:
+        realized_mix_vol = self._realized_mix_volume(
+            mix_vol, actions, _cache_key=_cache_key
+        )
         return [
             x * y
             for x, y in zip(
                 self._get_source_concentrations(_cache_key=_cache_key),
-                _ratio(self.each_volumes(mix_vol, _cache_key=_cache_key), mix_vol),
+                _ratio(
+                    self.each_volumes(
+                        mix_vol, actions, _cache_key=_cache_key
+                    ),
+                    realized_mix_vol,
+                ),
             )
         ]
+
+    def quantization_errors(
+        self,
+        mix_vol: DecimalQuantity,
+        actions: Sequence[AbstractAction],
+        _cache_key=None,
+    ) -> list[VolumeError]:
+        errors = super().quantization_errors(
+            mix_vol, actions, _cache_key=_cache_key
+        )
+        source_concs = self._get_source_concentrations(_cache_key=_cache_key)
+        if not source_concs:
+            return errors
+        if self.method == "min_volume":
+            reference_conc = max(source_concs)
+        elif self.method == "max_volume" or (
+            isinstance(self.method, Sequence)
+            and not isinstance(self.method, str)
+            and self.method[0] == "max_fill"
+        ):
+            reference_conc = min(source_concs)
+        elif self.method == "check":
+            reference_conc = source_concs[0]
+        else:
+            return errors
+
+        realized_mix_vol = self._realized_mix_volume(
+            mix_vol, actions, _cache_key=_cache_key
+        )
+        if math.isnan(realized_mix_vol.m) or realized_mix_vol.m == 0:
+            return errors
+        target = reference_conc * self.fixed_volume / realized_mix_vol
+        actuals = self.dest_concentrations(
+            mix_vol, actions, _cache_key=_cache_key
+        )
+        for component, actual in zip(self.components, actuals):
+            error = self._target_error(
+                label=component.name, actual=actual, target=target
+            )
+            if error is not None:
+                errors.append(error)
+        return errors
 
     @maybe_cache_once
     def each_volumes(
@@ -317,9 +541,11 @@ class EchoEqualTargetConcentration(AbstractEchoAction):
             sc = self._get_source_concentrations(_cache_key=_cache_key)
             if any(x != sc[0] for x in sc):
                 raise ValueError("Concentrations")
-            return [cast(DecimalQuantity, self.fixed_volume.to(uL))] * len(
-                self.components
+            quantized = (
+                round((self.fixed_volume / self.droplet_volume).m_as(""))
+                * self.droplet_volume
             )
+            return [cast(DecimalQuantity, quantized.to(uL))] * len(self.components)
         raise ValueError(f"equal_conc={self.method!r} not understood")
 
     @property
@@ -392,8 +618,16 @@ class EchoTargetConcentration(AbstractEchoAction):
         converter=_parse_conc_required, on_setattr=attrs.setters.convert
     )
     set_name: str | None = None
-    droplet_volume: DecimalQuantity = DEFAULT_DROPLET_VOL
+    droplet_volume: DecimalQuantity = attrs.field(
+        default=DEFAULT_DROPLET_VOL, converter=_parse_droplet_volume
+    )
     compact_display: bool = True
+    rtol: Decimal = attrs.field(
+        default=DEFAULT_RTOL, converter=_parse_rtol, kw_only=True
+    )
+    atol: DecimalQuantity | None = attrs.field(
+        default=None, converter=_parse_atol, kw_only=True
+    )
 
     @maybe_cache_once
     def dest_concentrations(
@@ -402,15 +636,41 @@ class EchoTargetConcentration(AbstractEchoAction):
         actions: Sequence[AbstractAction] = (),
         _cache_key=None,
     ) -> list[DecimalQuantity]:
+        realized_mix_vol = self._realized_mix_volume(
+            mix_vol, actions, _cache_key=_cache_key
+        )
         return [
             x * y
             for x, y in zip(
                 self._get_source_concentrations(_cache_key=_cache_key),
                 _ratio(
-                    self.each_volumes(mix_vol, actions, _cache_key=_cache_key), mix_vol
+                    self.each_volumes(mix_vol, actions, _cache_key=_cache_key),
+                    realized_mix_vol,
                 ),
             )
         ]
+
+    def quantization_errors(
+        self,
+        mix_vol: DecimalQuantity,
+        actions: Sequence[AbstractAction],
+        _cache_key=None,
+    ) -> list[VolumeError]:
+        errors = super().quantization_errors(
+            mix_vol, actions, _cache_key=_cache_key
+        )
+        actuals = self.dest_concentrations(
+            mix_vol, actions, _cache_key=_cache_key
+        )
+        for component, actual in zip(self.components, actuals):
+            error = self._target_error(
+                label=component.name,
+                actual=actual,
+                target=self.target_concentration,
+            )
+            if error is not None:
+                errors.append(error)
+        return errors
 
     @maybe_cache_once
     def each_volumes(
@@ -500,7 +760,15 @@ class EchoFillToVolume(AbstractEchoAction, AbstractFillToVolume):
     target_total_volume: DecimalQuantity = attrs.field(
         converter=_parse_vol_optional, default=None
     )
-    droplet_volume: DecimalQuantity = DEFAULT_DROPLET_VOL
+    droplet_volume: DecimalQuantity = attrs.field(
+        default=DEFAULT_DROPLET_VOL, converter=_parse_droplet_volume
+    )
+    rtol: Decimal = attrs.field(
+        default=DEFAULT_RTOL, converter=_parse_rtol, kw_only=True
+    )
+    atol: DecimalQuantity | None = attrs.field(
+        default=None, converter=_parse_atol, kw_only=True
+    )
 
     @maybe_cache_once
     def dest_concentrations(
@@ -509,15 +777,43 @@ class EchoFillToVolume(AbstractEchoAction, AbstractFillToVolume):
         actions: Sequence[AbstractAction] = (),
         _cache_key=None,
     ) -> list[DecimalQuantity]:
+        realized_mix_vol = self._realized_mix_volume(
+            mix_vol, actions, _cache_key=_cache_key
+        )
         return [
             x * y
             for x, y in zip(
                 self._get_source_concentrations(_cache_key=_cache_key),
                 _ratio(
-                    self.each_volumes(mix_vol, actions, _cache_key=_cache_key), mix_vol
+                    self.each_volumes(mix_vol, actions, _cache_key=_cache_key),
+                    realized_mix_vol,
                 ),
             )
         ]
+
+    def quantization_errors(
+        self,
+        mix_vol: DecimalQuantity,
+        actions: Sequence[AbstractAction],
+        _cache_key=None,
+    ) -> list[VolumeError]:
+        errors = super().quantization_errors(
+            mix_vol, actions, _cache_key=_cache_key
+        )
+        target = (
+            mix_vol
+            if math.isnan(self.target_total_volume.m)
+            else self.target_total_volume
+        )
+        actual = self._realized_mix_volume(
+            mix_vol, actions, _cache_key=_cache_key
+        )
+        error = self._target_error(
+            label=self.components[0].name, actual=actual, target=target
+        )
+        if error is not None:
+            errors.append(error)
+        return errors
 
     @maybe_cache_once
     def each_volumes(

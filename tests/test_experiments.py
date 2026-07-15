@@ -169,6 +169,154 @@ def test_check_volumes(experiment, capsys):
     experiment.remove_mix("mixmix2")
 
 
+def test_add_single_component_returns_experiment():
+    exp = Experiment(volume_checks=False)
+    component = Component("component")
+
+    assert exp.add(component) is exp
+    assert exp.components == {"component": component}
+
+
+def test_add_multiple_components_checks_volumes_once(monkeypatch):
+    checked_components = []
+
+    def record_check_volumes(self, *, display, raise_error):
+        checked_components.append(list(self.components))
+
+    monkeypatch.setattr(Experiment, "check_volumes", record_check_volumes)
+    exp = Experiment()
+    components = [Component("a"), Component("b"), Component("c")]
+
+    assert exp.add(*components) is exp
+    assert list(exp.components) == ["a", "b", "c"]
+    assert checked_components == [["a", "b", "c"]]
+
+
+def test_add_multiple_components_volume_check_options(monkeypatch):
+    checks = []
+
+    def record_check_volumes(self, *, display, raise_error):
+        checks.append(list(self.components))
+
+    monkeypatch.setattr(Experiment, "check_volumes", record_check_volumes)
+    exp = Experiment(volume_checks=False)
+
+    exp.add(Component("a"), Component("b"))
+    exp.add(Component("c"), check_volumes=False)
+    assert checks == []
+
+    exp.volume_checks = True
+    exp.add(Component("d"), Component("e"), check_volumes=None)
+    assert checks == [["a", "b", "c", "d", "e"]]
+
+
+def test_add_multiple_components_resolves_in_order_and_applies_reference():
+    reference = Reference.from_csv("tests/data/test_reference.csv")
+    exp = Experiment(reference=reference, volume_checks=False)
+    base = Component("base", "1 uM")
+    mixes = [
+        Mix(FV(["base", "comp1"], "1 uL"), name="mix1"),
+        Mix(FV(["base", "comp1"], "2 uL"), name="mix2"),
+    ]
+
+    exp.add(base, *mixes)
+
+    assert list(exp.components) == ["base", "mix1", "mix2"]
+    for mix in mixes:
+        assert mix.actions[0].components[0] is base
+        assert mix.actions[0].components[1].concentration == Q_("1000 nM")
+        assert mix.actions[0].components[1].plate == "P 1"
+
+
+@pytest.mark.parametrize(
+    ("check_existing", "replacement", "message"),
+    [
+        (True, Component("duplicate", "1 uM"), "already exists in experiment\\.$"),
+        ("equal", Component("duplicate", "1 uM"), "already exists in experiment\\.$"),
+        (
+            "equal",
+            Component("duplicate", "2 uM"),
+            "already exists in experiment, and is different\\.$",
+        ),
+    ],
+)
+def test_add_multiple_components_duplicate_error_is_atomic(
+    check_existing, replacement, message
+):
+    original = Component("duplicate", "1 uM")
+    exp = Experiment({"duplicate": original}, volume_checks=False)
+
+    with pytest.raises(ValueError, match=message):
+        exp.add(
+            Component("new"),
+            replacement,
+            check_existing=check_existing,
+        )
+
+    assert list(exp.components.items()) == [("duplicate", original)]
+
+
+def test_add_multiple_components_check_existing_false_replaces():
+    original = Component("duplicate", "1 uM")
+    replacement = Component("duplicate", "2 uM")
+    new = Component("new")
+    exp = Experiment({"duplicate": original}, volume_checks=False)
+
+    exp.add(new, replacement, check_existing=False)
+
+    assert list(exp.components.items()) == [
+        ("duplicate", replacement),
+        ("new", new),
+    ]
+
+
+def test_add_multiple_components_unnamed_component_is_atomic():
+    original = Component("original")
+    exp = Experiment({"original": original}, volume_checks=False)
+    registry = exp.components
+
+    with pytest.raises(ValueError, match="must have a name"):
+        exp.add(Component("new"), Component(""))
+
+    assert exp.components is registry
+    assert list(exp.components.items()) == [("original", original)]
+
+
+def test_add_multiple_components_preparation_error_is_atomic():
+    reference = Reference.from_csv("tests/data/test_reference.csv")
+    original = Component("original")
+    exp = Experiment(
+        {"original": original}, reference=reference, volume_checks=False
+    )
+    good = Mix(FV("comp1", "1 uL"), name="good")
+    bad = Mix(FV(Component("comp1", "150 nM"), "1 uL"), name="bad")
+
+    with pytest.raises(ValueError):
+        exp.add(good, bad)
+
+    assert list(exp.components.items()) == [("original", original)]
+
+
+def test_add_multiple_components_volume_error_restores_replaced_entries():
+    original = Component("original", "1 uM")
+    inner = Mix(FV(Component("stock"), "5 uL"), name="inner")
+    exp = Experiment(
+        {"original": original, "inner": inner}, volume_checks=True
+    )
+    registry = exp.components
+    replacement = Component("original", "2 uM")
+    outer = Mix(FV("inner", "10 uL"), name="outer")
+
+    with pytest.raises(VolumeError):
+        exp.add(replacement, outer, check_existing=False)
+
+    assert exp.components is registry
+    assert list(exp.components.items()) == [
+        ("original", original),
+        ("inner", inner),
+    ]
+
+
 def test_unnamed_mix(experiment):
     with pytest.raises(ValueError):
         experiment.add_mix(Mix(FC(["a"], "1 µM"), fixed_total_volume="10 µL"))

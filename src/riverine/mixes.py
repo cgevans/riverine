@@ -590,16 +590,25 @@ class Mix(AbstractComponent):
             has_fixed_total_volume=self.has_fixed_total_volume(),
             buffer_name=self._get_buffer_name(),
             intermediate_mixes=intermediate_mixes,
+            min_volume_exemptions=[
+                mixline.note is not None and "ECHO" in mixline.note
+                for mixline in mixlines
+            ],
         )
 
-        # ECHO-specific per-mixline min_volume check (not in pure solver)
+        error_list.extend(
+            self._echo_quantization_errors(_cache_key=_cache_key)
+        )
+
+        # Check individual manual transfers after grouped display rows have been
+        # validated. Echo actions use their droplet-volume constraints instead of
+        # the mix's manual-pipette minimum.
         for mixline in mixlines:
             if (
-                not isnan(mixline.each_tx_vol.m)
+                (mixline.note is None or "ECHO" not in mixline.note)
+                and not isnan(mixline.each_tx_vol.m)
                 and mixline.each_tx_vol != ZERO_VOL
-                and (mixline.each_tx_vol < self.min_volume)
-                if ((mixline.note is None) or ("ECHO" not in mixline.note))
-                else False  # FIXME
+                and mixline.each_tx_vol < self.min_volume
             ):
                 if mixline.names == [self._get_buffer_name()]:
                     msg = (
@@ -619,6 +628,19 @@ class Mix(AbstractComponent):
                 error_list.append(VolumeError(msg))
 
         return error_list
+
+    def _echo_quantization_errors(self, _cache_key=None) -> list[VolumeError]:
+        """Return Echo quantization errors for this mix."""
+        mix_vol = self._get_total_volume(_cache_key=_cache_key)
+        errors: list[VolumeError] = []
+        for action in self.actions:
+            if isinstance(action, AbstractEchoAction):
+                errors.extend(
+                    action.quantization_errors(
+                        mix_vol, self.actions, _cache_key=_cache_key
+                    )
+                )
+        return errors
 
     def all_components_polars(self, _cache_key=None) -> pl.DataFrame:
         _cache_key = gen_random_hash() if _cache_key is None else _cache_key
@@ -845,6 +867,13 @@ class Mix(AbstractComponent):
         -------
             picklist for the mix
         """
+
+        _cache_key = gen_random_hash() if _cache_key is None else _cache_key
+        quantization_errors = self._echo_quantization_errors(
+            _cache_key=_cache_key
+        )
+        if quantization_errors:
+            raise VolumeError("\n".join(str(error) for error in quantization_errors))
 
         PickList = _get_picklist_class()
         pls: list[PickList] = []

@@ -38,6 +38,7 @@ components at different concentrations spread across several plates.
 - Naming a fill component in the action while giving the volume via `fixed_total_volume=` now composes rather than erroring; setting the total volume in two places (a fill target and `fixed_total_volume=`) raises an error.
 - Setting `buffer_name` on a mix with no fill action no longer forces the total volume to zero.
 - `EchoFillToVolume` now raises an error when its buffer has no source location, instead of silently emitting a picklist with a null source plate/well.
+- Echo actions now omit zero-volume transfers from picklists. `EchoFillToVolume`, `EchoTargetConcentration`, and `EchoEqualTargetConcentration` validate quantized results with a default `rtol=1%` and zero absolute tolerance; callers can set an action-appropriate `atol` (for example, `atol="5 nL"` for a fill or `atol="0.1 nM"` for a concentration). Concentrations are checked using the realized, quantized mix volume. Echo 6xx resolution remains available through `droplet_volume="2.5 nL"`.
 
 ## v0.7.1
 

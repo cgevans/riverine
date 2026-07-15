@@ -1,4 +1,5 @@
 import pytest
+import pandas as pd
 
 from riverine import Reference
 
@@ -26,3 +27,23 @@ def test_raise_error_if_plate_name_not_found():
     # This should raise an error because the plate name "fake plate name" is not found in the reference
     with pytest.raises(ValueError):
         r_order.plate_map("fake plate name")
+
+
+def test_idt_order_headings_are_case_insensitive_and_blank_rows_removed(tmp_path):
+    path = tmp_path / "idt-order.xlsx"
+    with pd.ExcelWriter(path) as writer:
+        pd.DataFrame(
+            {
+                "Well": [" A1 ", "A2"],
+                "name": [" strand-1 ", None],
+                "Sequence": [" ACGT ", None],
+            }
+        ).to_excel(writer, sheet_name="Order Plate 1", index=False)
+
+    reference = Reference.compile((str(path), "200 uM"))
+
+    assert len(reference) == 1
+    assert reference.df.loc[0, "Name"] == "strand-1"
+    assert reference.df.loc[0, "Plate"] == "Order Plate 1"
+    assert reference.df.loc[0, "Well"] == "A1"
+    assert reference.df.loc[0, "Sequence"] == "ACGT"

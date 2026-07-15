@@ -151,7 +151,7 @@ Experiments
 
 Experiments hold mixes, and potentially concentrations, to be referred to later and tracked as a group.
 
-Mixes can be added to an experiment using the :any:`Experiment.add_mix` method, or by using `experiment[mix_name] = Mix(...)`.  In the latter case, the name in the Mix does not need to be set: it will be set to `mix_name` when it is added to the experiment.  When mixes are added, components that are string references are resolved to components with the same names in the experiment.  This is obviously not possible if the mix being referred to is only added later: in this case, you can use the :any:`Experiment.resolve_components` method to resolve the references.
+Mixes can be added to an experiment using the :any:`Experiment.add_mix` method, and components can be added with :any:`Experiment.add`.  ``Experiment.add`` accepts one or more components, so use ``experiment.add(*components)`` when adding a collection: components are prepared in order and volumes are validated only once after the complete batch.  Item assignment with ``experiment[mix_name] = Mix(...)`` is also supported.  With item assignment, the name in the Mix does not need to be set: it will be set to ``mix_name`` when it is added to the experiment.  When mixes are added, components that are string references are resolved to components with the same names in the experiment.  This is obviously not possible if the mix being referred to is only added later: in this case, you can use the :any:`Experiment.resolve_components` method to resolve the references.
 
 A useful feature of an Experiment is that the consumed and produced volumes of mixes, and the consumed volumes of other components, can be tracked across all of the mixes involved:
 

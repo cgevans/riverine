@@ -197,6 +197,12 @@ class Experiment:
                     pls.append(p)
         p = PickList.concat(pls)
 
+        # An experiment whose Echo actions are all no-ops still has a valid,
+        # typed empty picklist.  Avoid constructing an untyped empty topology
+        # dataframe, whose null join keys cannot be matched to picklist strings.
+        if p.data.is_empty():
+            return p
+
         import networkx as nx
         import polars as pl
 
@@ -224,38 +230,63 @@ class Experiment:
     def add(
         self,
         component: AbstractComponent,
-        *,
+        *components: AbstractComponent,
         check_volumes: bool | None = None,
         apply_reference: bool = True,
         check_existing: bool | Literal["equal"] = "equal",
     ) -> Experiment:
+        """Add one or more components to the experiment.
+
+        Components are added and prepared in the order given.  The keyword options
+        apply to every component in the batch.  Volume checking is performed once,
+        after all components have been added.  If component preparation or volume
+        checking fails, the component registry is restored to its state before this
+        call.
+
+        For a large collection of components, ``experiment.add(*components)`` avoids
+        the repeated volume validation performed by separate calls.
+        """
         if check_volumes is None:
             check_volumes = self.volume_checks
 
-        if not component.name:
-            raise ValueError("Component must have a name to be added to an experiment.")
+        component_registry = self.components
+        previous_components = component_registry.copy()
+        try:
+            for current_component in (component, *components):
+                if not current_component.name:
+                    raise ValueError(
+                        "Component must have a name to be added to an experiment."
+                    )
 
-        existing = self.get(component.name, None)
-        if check_existing and (existing is not None):
-            if check_existing == "equal" and existing != component:
-                raise ValueError(
-                    f"{component.name} already exists in experiment, and is different."
-                )
-            else:
-                raise ValueError(f"{component.name} already exists in experiment.")
-        self.components[component.name] = component
+                existing = self.get(current_component.name, None)
+                if check_existing and (existing is not None):
+                    if check_existing == "equal" and existing != current_component:
+                        raise ValueError(
+                            f"{current_component.name} already exists in experiment, "
+                            "and is different."
+                        )
+                    else:
+                        raise ValueError(
+                            f"{current_component.name} already exists in experiment."
+                        )
+                self.components[current_component.name] = current_component
 
-        if isinstance(component, Mix):
-            component = component.with_experiment(self, inplace=True)
-            if apply_reference and self.reference:
-                component = component.with_reference(self.reference, inplace=True)
+                if isinstance(current_component, Mix):
+                    current_component = current_component.with_experiment(
+                        self, inplace=True
+                    )
+                    if apply_reference and self.reference:
+                        current_component = current_component.with_reference(
+                            self.reference, inplace=True
+                        )
 
-        if check_volumes:
-            try:
+            if check_volumes:
                 self.check_volumes(display=False, raise_error=True)
-            except VolumeError as e:
-                del self.components[component.name]
-                raise e
+        except Exception:
+            component_registry.clear()
+            component_registry.update(previous_components)
+            self.components = component_registry
+            raise
 
         return self
 

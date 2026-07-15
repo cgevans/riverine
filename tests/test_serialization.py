@@ -1,5 +1,7 @@
 """Round-trip serialization tests for components, actions, and mixes."""
 
+import json
+
 import pytest
 
 from riverine import (
@@ -102,6 +104,42 @@ def test_filltovolume_roundtrip(experiment):
     rebuilt = _roundtrip_action(action, experiment)
     assert rebuilt.target_total_volume == action.target_total_volume
     assert rebuilt.components[0].name == "Buffer"
+
+
+def test_echo_tolerance_roundtrip(experiment):
+    pytest.importorskip("kithairon")
+    from riverine import EchoTargetConcentration
+
+    action = EchoTargetConcentration(
+        Component("echo", "100 uM", plate="source", well="A1"),
+        "1 nM",
+        rtol="2%",
+        atol="0.5 nM",
+        droplet_volume="2.5 nL",
+    )
+    data = action._unstructure(experiment)
+    # The action representation is suitable for Experiment's JSON persistence.
+    json.dumps(data)
+
+    rebuilt = _structure(data, experiment)
+
+    assert isinstance(rebuilt, EchoTargetConcentration)
+    assert rebuilt.rtol == Q_("0.02")
+    assert rebuilt.atol == Q_("0.5 nM")
+    assert rebuilt.droplet_volume == Q_("2.5 nL")
+
+
+def test_echo_tolerance_defaults_roundtrip(experiment):
+    pytest.importorskip("kithairon")
+    from riverine import EchoFillToVolume
+
+    action = EchoFillToVolume(
+        Component("buffer", plate="source", well="A1"), "20 uL"
+    )
+    rebuilt = _roundtrip_action(action, experiment)
+
+    assert rebuilt.rtol == Q_("0.01")
+    assert rebuilt.atol is None
 
 
 def test_simple_mix_roundtrip():
