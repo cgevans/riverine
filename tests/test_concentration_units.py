@@ -57,10 +57,10 @@ def test_fold_and_mass_tracked_through_mix():
         name="multiunit",
     )
     ac = mix.all_components()
-    assert_close(Q_(ac.loc["S1", "concentration_nM"], ac.loc["S1", "concentration_unit"]), Q_(1, uM))
-    assert_close(Q_(ac.loc["TE_10x", "concentration_nM"], ac.loc["TE_10x", "concentration_unit"]), Q_(1, x))
+    assert_close(Q_(ac.loc["S1", "concentration_magnitude"], ac.loc["S1", "concentration_unit"]), Q_(1, uM))
+    assert_close(Q_(ac.loc["TE_10x", "concentration_magnitude"], ac.loc["TE_10x", "concentration_unit"]), Q_(1, x))
     assert_close(
-        Q_(ac.loc["BSA", "concentration_nM"], ac.loc["BSA", "concentration_unit"]),
+        Q_(ac.loc["BSA", "concentration_magnitude"], ac.loc["BSA", "concentration_unit"]),
         Q_("0.05", "g/L"),
     )
 
@@ -78,7 +78,7 @@ def test_storedmix_fold_content_diluted():
     ac = mix.all_components()
     # 50 nM / 200 uM = 1/4000; 10 x / 4000 = 0.0025 x
     assert_close(
-        Q_(ac.loc["TE", "concentration_nM"], ac.loc["TE", "concentration_unit"]),
+        Q_(ac.loc["TE", "concentration_magnitude"], ac.loc["TE", "concentration_unit"]),
         Q_("0.0025", x),
     )
 

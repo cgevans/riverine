@@ -33,6 +33,7 @@ from .units import (
     _parse_vol_optional,
     _parse_vol_required,
     _ratio,
+    canonical_concentration_unit,
     uL,
 )
 
@@ -69,7 +70,9 @@ class AbstractEchoAction(ActionWithComponents, metaclass=ABCMeta):
         # picklist with a null source plate/well.  Flag it clearly instead.
         if isinstance(self, AbstractFillToVolume):
             for c, v in zip(self.components, eavols):
-                if math.isnan(v.m) or v.m == 0:
+                # Only a positive transfer needs a source; a zero or negative
+                # (over-filled) volume transfers nothing from this buffer.
+                if math.isnan(v.m) or v.m <= 0:
                     continue
                 if (
                     not isinstance(c.plate, str)
@@ -83,6 +86,12 @@ class AbstractEchoAction(ActionWithComponents, metaclass=ABCMeta):
                         "Reference) rather than a bare name for an Echo buffer."
                     )
 
+        sconcs = self._get_source_concentrations(_cache_key=_cache_key)
+        # Report each component's concentration in its own kind of unit (molarity,
+        # mass/volume, or fold), rather than forcing molarity.  Source and
+        # destination share a component's unit.
+        conc_units = [str(canonical_concentration_unit(c)) for c in sconcs]
+
         locdf = PickList(
             pl.DataFrame(
                 {
@@ -90,10 +99,12 @@ class AbstractEchoAction(ActionWithComponents, metaclass=ABCMeta):
                         c.printed_name(tablefmt="plain") for c in self.components
                     ],
                     "Source Concentration": [
-                        float(c.m_as("nM")) for c in self._get_source_concentrations(_cache_key=_cache_key)
+                        float(c.m_as(u)) for c, u in zip(sconcs, conc_units)
                     ],
-                    "Destination Concentration": [float(c.m_as("nM")) for c in dconcs],
-                    "Concentration Units": "nM",
+                    "Destination Concentration": [
+                        float(c.m_as(u)) for c, u in zip(dconcs, conc_units)
+                    ],
+                    "Concentration Units": conc_units,
                     "Transfer Volume": [float(v.m_as("nL")) for v in eavols],
                     "Source Plate Name": [c.plate for c in self.components],
                     "Source Plate Type": [

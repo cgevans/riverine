@@ -122,7 +122,7 @@ def test_component_allcomps():
 
     assert len(ac) == 1
     assert ac.loc["A", "component"] == Component("A", 1 * uM)
-    assert ac.loc["A", "concentration_nM"] == Decimal("1000.0")
+    assert ac.loc["A", "concentration_magnitude"] == Decimal("1000.0")
 
 
 @pytest.fixture
@@ -408,9 +408,9 @@ def test_toconcentration():
 
     ac = mix.all_components()
 
-    assert ac.loc["A", "concentration_nM"] == 150
-    assert ac.loc["B", "concentration_nM"] == 140
-    assert ac.loc["C", "concentration_nM"] == 140
+    assert ac.loc["A", "concentration_magnitude"] == 150
+    assert ac.loc["B", "concentration_magnitude"] == 140
+    assert ac.loc["C", "concentration_magnitude"] == 140
 
     ml = mix.mixlines("pipe")
 

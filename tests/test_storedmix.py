@@ -57,9 +57,9 @@ def test_strand_in_buffer_contributes_to_mix():
         name="mixA",
     )
     ac = mix.all_components()
-    assert_close(Q_(ac.loc["S1", "concentration_nM"], nM), Q_(50, nM))
+    assert_close(Q_(ac.loc["S1", "concentration_magnitude"], nM), Q_(50, nM))
     # Mg is 200 mM in the stock; drawn at the same 50 nM / 200 uM ratio gives 50 uM.
-    assert_close(Q_(ac.loc["Mg", "concentration_nM"], nM), Q_(50, uM))
+    assert_close(Q_(ac.loc["Mg", "concentration_magnitude"], nM), Q_(50, uM))
 
 
 def test_premade_mix_dilutes_all_contents_together():
@@ -74,7 +74,7 @@ def test_premade_mix_dilutes_all_contents_together():
     )
     ac = mix.all_components()
     for i in range(1, 5):
-        assert_close(Q_(ac.loc[f"S{i}", "concentration_nM"], nM), Q_(1, uM))
+        assert_close(Q_(ac.loc[f"S{i}", "concentration_magnitude"], nM), Q_(1, uM))
 
 
 def test_from_mix_captures_contents():
@@ -91,7 +91,7 @@ def test_from_mix_captures_contents():
     stock = StoredMix.from_mix(premade, volume="50 uL")
     ac = stock.all_components()
     for i in range(1, 4):
-        assert_close(Q_(ac.loc[f"S{i}", "concentration_nM"], nM), Q_(10, uM))
+        assert_close(Q_(ac.loc[f"S{i}", "concentration_magnitude"], nM), Q_(10, uM))
 
 
 def test_from_mix_preserves_effective_concentration():

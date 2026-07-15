@@ -46,6 +46,7 @@ nmol = ureg.Unit("nmol")
 
 # A dimensionless "fold" concentration, written "x" (e.g. a 10x buffer).
 ureg.define("fold = [] = x")
+_FOLD_UNIT = ureg.Unit("x")
 
 # Storage unit for a mass/volume concentration.
 _MASS_CONC_UNIT = ureg.Unit("g/L")
@@ -53,10 +54,17 @@ _MASS_CONC_UNIT = ureg.Unit("g/L")
 DecimalQuantity: TypeAlias = Quantity # "PlainQuantity[Decimal]"
 
 
+def is_fold(q: Quantity) -> bool:
+    """Whether `q` is a fold (x) concentration: a dimensionless quantity written
+    with the explicit ``x``/``fold`` unit.  A bare number with no unit is not a
+    fold concentration (and not a concentration at all)."""
+    return q.units == _FOLD_UNIT
+
+
 def is_concentration(q: Quantity) -> bool:
     """Whether `q` is a kind of concentration riverine tracks: a molarity, a
     mass/volume, or a dimensionless fold (x)."""
-    return q.check(nM) or q.check(_MASS_CONC_UNIT) or q.dimensionless
+    return q.check(nM) or q.check(_MASS_CONC_UNIT) or is_fold(q)
 
 
 def concentrations_same_kind(a: Quantity, b: Quantity) -> bool:
@@ -71,8 +79,8 @@ def canonical_concentration_unit(q: Quantity) -> pint.Unit:
         return nM
     if q.check(_MASS_CONC_UNIT):
         return _MASS_CONC_UNIT
-    if q.dimensionless:
-        return ureg.Unit("x")
+    if is_fold(q):
+        return _FOLD_UNIT
     raise ValueError(f"{q} is not a concentration.")
 
 

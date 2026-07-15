@@ -34,6 +34,8 @@ from .actions import (
     MixVolumeDep,
     PipetteFillToVolume,
     FillToVolume,
+    _determining_actions,
+    _multiple_determiners_msg,
 )
 from ._warnings import _warn_deprecated
 from .components import (
@@ -62,7 +64,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from .references import Reference
 
 from .units import *
-from .units import VolumeError, _parse_vol_optional, normalize
+from .units import NAN_CONC, VolumeError, _parse_vol_optional, normalize
 from .solver import compute_total_volume, validate_mix as _validate_mix
 from .util import _get_picklist_class, gen_random_hash, maybe_cache_once
 
@@ -179,9 +181,11 @@ class Mix(AbstractComponent):
     )
 
     def __init__(self, *args, **kwargs):
-        ftv_given = "fixed_total_volume" in kwargs
+        # Treat fixed_total_volume=None (the former default) as not given, so
+        # passing it through explicitly does not trip the deprecation warning.
         p = kwargs.pop("fixed_total_volume", None)
-        ftv = _parse_vol_optional(p) if p is not None else None
+        ftv_given = p is not None
+        ftv = _parse_vol_optional(p) if ftv_given else None
 
         buffer_name_given = "buffer_name" in kwargs
         buffer_name = kwargs.pop("buffer_name", "Buffer")
@@ -276,18 +280,9 @@ class Mix(AbstractComponent):
 
         Internal, non-warning accessor.
         """
-        determining = [
-            action
-            for action in self.actions
-            if action.mix_volume_effect()[0] == MixVolumeDep.DETERMINES
-        ]
+        determining = _determining_actions(self.actions)
         if len(determining) > 1:
-            raise ValueError(
-                "A mix can have at most one action that determines its total "
-                "volume, but these do: "
-                + ", ".join(f"{type(a).__name__}({a.name})" for a in determining)
-                + ".  Keep a single PipetteFillToVolume / EchoFillToVolume action."
-            )
+            raise ValueError(_multiple_determiners_msg(determining))
         return determining[0] if determining else None
 
     def _get_fixed_total_volume(self) -> DecimalQuantity:
@@ -419,9 +414,12 @@ class Mix(AbstractComponent):
         elif isinstance(self.fixed_concentration, str):
             ac = self.all_components()
             row = ac.loc[self.fixed_concentration]
+            mag = row["concentration_magnitude"]
+            if mag is None:
+                return NAN_CONC
             unit = row["concentration_unit"]
             return ureg.Quantity(
-                Decimal(row["concentration_nM"]), unit if unit is not None else nM
+                Decimal(mag), unit if unit is not None else nM
             )
         elif self.fixed_concentration is None:
             return self.actions[0].dest_concentrations(
@@ -633,21 +631,13 @@ class Mix(AbstractComponent):
         _validate_concentration_units(df)
 
         return df.group_by("name").agg(
-            pl.when(pl.col("concentration_nM").is_null().any())
+            pl.when(pl.col("concentration_magnitude").is_null().any())
             .then(pl.lit(None))
-            .otherwise(pl.col("concentration_nM").sum())
-            .alias("concentration_nM").cast(pl.Decimal(scale=6)),
+            .otherwise(pl.col("concentration_magnitude").sum())
+            .alias("concentration_magnitude").cast(pl.Decimal(scale=6)),
             pl.col("concentration_unit").drop_nulls().first(),
             pl.col("component").first(),  # FIXME
         )
-
-    def all_components(self) -> pd.DataFrame:
-        """
-        Return a Series of all component names, and their concentrations (as pint nM).
-        """
-        df = self.all_components_polars().to_pandas()
-        df.set_index("name", inplace=True)
-        return df
 
     def _repr_markdown_(self) -> str:
         return f"Table: {self.infoline()}\n" + self.table(tablefmt="pipe")
@@ -1520,12 +1510,12 @@ def split_mix(
                 compact_display=action.compact_display,
             )
             new_actions[i] = large_fixed_volume_action
-        if isinstance(action, PipetteFillToVolume):
-            large_fill_to_volume_action = PipetteFillToVolume(
-                components=action.components,
-                target_total_volume=large_volume,
+        if isinstance(action, AbstractFillToVolume):
+            # evolve preserves the concrete type (Pipette or Echo) and any
+            # extra fields (e.g. an Echo fill's droplet_volume).
+            new_actions[i] = attrs.evolve(
+                action, target_total_volume=large_volume
             )
-            new_actions[i] = large_fill_to_volume_action
     for i, new_action in new_actions.items():
         actions[i] = new_action
 

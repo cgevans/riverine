@@ -81,6 +81,33 @@ def _validate_concentration_units(df: pl.DataFrame) -> None:
         )
 
 
+def _ensure_concentration_unit_column(df: pl.DataFrame) -> pl.DataFrame:
+    """Normalise a component frame to the current schema.
+
+    Older custom components' ``all_components_polars`` returned
+    ``{name, concentration_nM, component}``, with the magnitude in nM and no unit
+    column.  Migrate that magnitude column to ``concentration_magnitude``, add the
+    ``concentration_unit`` column such frames lack (treating a value as molarity,
+    a null magnitude as unit-less), and put the columns in the canonical order so
+    they concatenate with native frames.
+    """
+    if (
+        "concentration_magnitude" not in df.columns
+        and "concentration_nM" in df.columns
+    ):
+        df = df.rename({"concentration_nM": "concentration_magnitude"})
+    if "concentration_unit" not in df.columns:
+        df = df.with_columns(
+            pl.when(pl.col("concentration_magnitude").is_null())
+            .then(pl.lit(None, dtype=pl.String))
+            .otherwise(pl.lit("nM"))
+            .alias("concentration_unit")
+        )
+    return df.select(
+        ["name", "concentration_magnitude", "concentration_unit", "component"]
+    )
+
+
 class AbstractComponent(ABC):
     """Abstract class for a component in a mix.  Custom components that don't inherit from
     a concrete class should inherit from this class and implement the methods here.
@@ -125,9 +152,15 @@ class AbstractComponent(ABC):
         ...
 
     @abstractmethod
-    def all_components(self) -> pd.DataFrame:  # pragma: no cover
-        "A dataframe of all components."
+    def all_components_polars(self, _cache_key=None) -> pl.DataFrame:  # pragma: no cover
+        "A polars dataframe of all contained components and their concentrations."
         ...
+
+    def all_components(self) -> pd.DataFrame:
+        "A pandas dataframe of all contained components, indexed by name."
+        df = self.all_components_polars().to_pandas()
+        df.set_index("name", inplace=True)
+        return df
 
     @abstractmethod
     def with_reference(
@@ -228,23 +261,18 @@ class Component(AbstractComponent):
         comp_df = pl.DataFrame(
             {
                 'name': [self.name],
-                'concentration_nM': [c],
+                'concentration_magnitude': [c],
                 'concentration_unit': [unit],
                 'component': [self]
             },
             schema={
                 'name': pl.String,
-                'concentration_nM': pl.Decimal(scale=6),
+                'concentration_magnitude': pl.Decimal(scale=6),
                 'concentration_unit': pl.String,
                 'component': pl.Object
             }
         )
         return comp_df
-
-    def all_components(self) -> pd.DataFrame:
-        df = self.all_components_polars().to_pandas()
-        df.set_index('name', inplace=True)
-        return df
 
     def _unstructure(self, experiment: Experiment | None = None) -> dict[str, Any]:
         d = {}
@@ -538,22 +566,22 @@ class StoredMix(AbstractComponent):
         return self.name
 
     def all_components_polars(self, _cache_key=None) -> pl.DataFrame:
-        frames = [c.all_components_polars(_cache_key=_cache_key) for c in self.contents]
+        frames = [
+            _ensure_concentration_unit_column(
+                c.all_components_polars(_cache_key=_cache_key)
+            )
+            for c in self.contents
+        ]
         if not frames:
             return pl.DataFrame(
                 schema={
                     "name": pl.String,
-                    "concentration_nM": pl.Decimal(scale=6),
+                    "concentration_magnitude": pl.Decimal(scale=6),
                     "concentration_unit": pl.String,
                     "component": pl.Object,
                 }
             )
         return pl.concat(frames)
-
-    def all_components(self) -> pd.DataFrame:
-        df = self.all_components_polars().to_pandas()
-        df.set_index("name", inplace=True)
-        return df
 
     def _update_volumes(
         self,
@@ -605,7 +633,7 @@ class StoredMix(AbstractComponent):
         components and their concentrations as the stock contents."""
         contents: list[AbstractComponent] = []
         for nm, row in mix.all_components().iterrows():
-            conc_mag = row["concentration_nM"]
+            conc_mag = row["concentration_magnitude"]
             unit = row.get("concentration_unit")
             if conc_mag is None or unit is None:
                 conc = NAN_CONC
@@ -670,7 +698,7 @@ def _empty_components() -> pd.DataFrame:
     cps = pd.DataFrame(
         index=pd.Index([], name="name"),
     )
-    cps["concentration_nM"] = pd.Series([], dtype=object)
+    cps["concentration_magnitude"] = pd.Series([], dtype=object)
     cps["concentration_unit"] = pd.Series([], dtype=object)
     cps["component"] = pd.Series([], dtype=object)
     return cps

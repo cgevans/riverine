@@ -12,6 +12,7 @@ import pandas as pd
 from .components import (
     AbstractComponent,
     _empty_components,
+    _ensure_concentration_unit_column,
     _maybesequence_comps,
     _validate_concentration_units,
 )
@@ -58,6 +59,41 @@ class MixVolumeDep(Enum):
     INDEPENDENT = "independent"
     DEPENDS = "depends"
     DETERMINES = "determines"
+
+
+def _raise_if_different_kind(
+    name: str, target: DecimalQuantity, source: DecimalQuantity
+) -> None:
+    """Raise a clear error when a target/destination concentration and a source
+    concentration are different kinds of unit (molarity vs mass/volume vs fold),
+    and so cannot be combined."""
+    if (
+        not isnan(target.m)
+        and not isnan(source.m)
+        and not concentrations_same_kind(target, source)
+    ):
+        raise ValueError(
+            f"Cannot set {name} to {target}: its source concentration "
+            f"{source} is a different kind of unit."
+        )
+
+
+def _determining_actions(
+    actions: Sequence["AbstractAction"],
+) -> list["AbstractAction"]:
+    """The actions in `actions` that determine the mix's total volume."""
+    return [
+        a for a in actions if a.mix_volume_effect()[0] == MixVolumeDep.DETERMINES
+    ]
+
+
+def _multiple_determiners_msg(actions: Sequence["AbstractAction"]) -> str:
+    return (
+        "A mix can have at most one action that determines its total volume, "
+        "but these do: "
+        + ", ".join(f"{type(a).__name__}({a.name})" for a in actions)
+        + ".  Keep a single PipetteFillToVolume / EchoFillToVolume action."
+    )
 
 
 T = TypeVar("T")
@@ -326,21 +362,15 @@ class ActionWithComponents(AbstractAction):
             self.dest_concentrations(mix_vol, actions, _cache_key=_cache_key),
             self._get_source_concentrations(_cache_key=_cache_key),
         ):
-            comps: pl.DataFrame = comp.all_components_polars(_cache_key=_cache_key)
+            comps: pl.DataFrame = _ensure_concentration_unit_column(
+                comp.all_components_polars(_cache_key=_cache_key)
+            )
 
-            if (
-                not isnan(dc.m)
-                and not isnan(sc.m)
-                and not concentrations_same_kind(dc, sc)
-            ):
-                raise ValueError(
-                    f"Cannot set {comp.name} to {dc}: its source concentration "
-                    f"{sc} is a different kind of unit."
-                )
+            _raise_if_different_kind(comp.name, dc, sc)
             r = _ratio(dc, sc)
             if math.isnan(r):
                 r = None
-            comps = comps.with_columns(pl.col("concentration_nM").mul(r).cast(pl.Decimal(scale=6)))
+            comps = comps.with_columns(pl.col("concentration_magnitude").mul(r).cast(pl.Decimal(scale=6)))
 
             all_comps.append(comps)
 
@@ -348,10 +378,10 @@ class ActionWithComponents(AbstractAction):
         _validate_concentration_units(newdf)
 
         newdf = newdf.group_by("name").agg(
-            pl.when(pl.col("concentration_nM").is_null().any())
+            pl.when(pl.col("concentration_magnitude").is_null().any())
             .then(pl.lit(None))
-            .otherwise(pl.col("concentration_nM").sum())
-            .alias("concentration_nM"),
+            .otherwise(pl.col("concentration_magnitude").sum())
+            .alias("concentration_magnitude"),
             pl.col("concentration_unit").drop_nulls().first(),
             pl.col("component").first(),  # FIXME
         )
@@ -713,6 +743,15 @@ class EqualConcentration(FixedVolume):
         _cache_key=None,
     ) -> list[DecimalQuantity]:
         sc = self._get_source_concentrations(_cache_key=_cache_key)
+        ref = next((c for c in sc if not isnan(c.m)), None)
+        if ref is not None:
+            for comp, c in zip(self.components, sc):
+                if not isnan(c.m) and not concentrations_same_kind(ref, c):
+                    raise ValueError(
+                        f"Cannot equalize concentrations for {comp.name}: its "
+                        f"source concentration {c} is a different kind of unit "
+                        f"than {ref}."
+                    )
         return compute_equal_concentration_each(self.fixed_volume, sc, self.method)
 
     @maybe_cache_once
@@ -829,11 +868,7 @@ class FixedConcentration(ActionWithComponents):
         source_concs = self._get_source_concentrations(_cache_key=_cache_key)
         target = self.fixed_concentration
         for comp, sc in zip(self.components, source_concs):
-            if not isnan(sc.m) and not concentrations_same_kind(target, sc):
-                raise ValueError(
-                    f"Cannot set {comp.name} to {target}: its source concentration "
-                    f"{sc} is a different kind of unit."
-                )
+            _raise_if_different_kind(comp.name, target, sc)
         ea_vols = compute_fixed_concentration_each(
             mix_volume,
             target,
@@ -948,8 +983,8 @@ class ToConcentration(ActionWithComponents):
                 )
             mcomp = action.all_components(mix_vol)
             cps, _ = cps.align(mcomp)
-            cps.loc[:, "concentration_nM"] = cps.loc[:, "concentration_nM"].fillna(Decimal("0.0")) # type:  ignore
-            cps.loc[mcomp.index, "concentration_nM"] += mcomp.concentration_nM
+            cps.loc[:, "concentration_magnitude"] = cps.loc[:, "concentration_magnitude"].fillna(Decimal("0.0")) # type:  ignore
+            cps.loc[mcomp.index, "concentration_magnitude"] += mcomp.concentration_magnitude
             cps.loc[mcomp.index, "concentration_unit"] = mcomp.concentration_unit
             cps.loc[mcomp.index, "component"] = mcomp.component
 
@@ -972,11 +1007,17 @@ class ToConcentration(ActionWithComponents):
         def _other_conc(comp: AbstractComponent) -> DecimalQuantity:
             if _othercomps is None or comp.name not in _othercomps.index:
                 return zero
-            mag = _othercomps.loc[comp.name, "concentration_nM"]
+            mag = _othercomps.loc[comp.name, "concentration_magnitude"]
             unit = _othercomps.loc[comp.name, "concentration_unit"]
             if mag is None or unit is None or (isinstance(unit, float) and isnan(unit)):
                 return zero
-            return Q_(mag, unit)
+            other = Q_(mag, unit)
+            if not concentrations_same_kind(self.fixed_concentration, other):
+                raise ValueError(
+                    f"Cannot set {comp.name} to {self.fixed_concentration}: another "
+                    f"action already contributes {other}, a different kind of unit."
+                )
+            return other
 
         otherconcs = [_other_conc(comp) for comp in self.components]
         return compute_toconcentration_dest_concs(self.fixed_concentration, otherconcs)
@@ -994,15 +1035,7 @@ class ToConcentration(ActionWithComponents):
         )
         source_concs = self._get_source_concentrations(_cache_key=_cache_key)
         for comp, dc, sc in zip(self.components, dest_concs, source_concs):
-            if (
-                not isnan(dc.m)
-                and not isnan(sc.m)
-                and not concentrations_same_kind(dc, sc)
-            ):
-                raise ValueError(
-                    f"Cannot set {comp.name} to {dc}: its source concentration "
-                    f"{sc} is a different kind of unit."
-                )
+            _raise_if_different_kind(comp.name, dc, sc)
         ea_vols = [
             mix_volume * r
             for r in _ratio(
@@ -1089,19 +1122,9 @@ class AbstractFillToVolume(ActionWithComponents):
         A fill computes its volume as ``target - sum(other actions)``; if another
         action also determines the volume, the two recurse into each other.
         """
-        others = [
-            a
-            for a in actions
-            if a is not self and a.mix_volume_effect()[0] == MixVolumeDep.DETERMINES
-        ]
+        others = [a for a in _determining_actions(actions) if a is not self]
         if others:
-            raise ValueError(
-                "Multiple actions determine the mix's total volume: "
-                + ", ".join(
-                    f"{type(a).__name__}({a.name})" for a in (self, *others)
-                )
-                + ".  Keep a single PipetteFillToVolume / EchoFillToVolume action."
-            )
+            raise ValueError(_multiple_determiners_msg([self, *others]))
 
 
 @attrs.define(eq=False)
