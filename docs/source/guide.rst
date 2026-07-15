@@ -159,6 +159,42 @@ A useful feature of an Experiment is that the consumed and produced volumes of m
    Experiment.check_volumes
    Experiment.consumed_and_produced_volumes
 
+Compiling an execution protocol
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An experiment containing manual and Echo actions can be compiled into a
+dependency-ordered physical protocol.  Compilation prepares intermediate
+mixes before they are consumed, groups ready manual work, and creates a new
+Echo run whenever later Echo transfers depend on intervening manual work::
+
+   plan = experiment.compile()
+
+   plan.steps
+   plan.manual_steps
+   plan.echo_steps
+   plan.echo_picklists
+   print(plan.to_markdown())
+
+Mix actions are dependency-ordered by default, so independent manual work can
+move earlier to reduce the number of Echo runs.  Use
+``Mix(..., execution_order="listed")`` when the action list is a required
+physical timeline.  Echo actions in a listed mix can additionally set
+``new_echo_run=True`` to add a run boundary.  Integer ``stage`` values impose
+global precedence within an Echo run.
+
+``Experiment.generate_picklists()`` returns one picklist per compiled Echo
+run.  The singular ``generate_picklist()`` remains convenient for experiments
+with zero or one Echo run, but raises when manual dependencies or an explicit
+barrier require several runs.
+
+.. autosummary::
+   Experiment.compile
+   Experiment.generate_picklists
+   Experiment.generate_picklist
+   ExperimentPlan
+   ManualStep
+   EchoStep
+
 Experiments also allow groups of mixes to be saved and loaded to JSON files.  When written, any mixes used in other mixes are replaced with references to those mixes, so that when the file is loaded, the mixes are linked back together, and changes to one mix in the experiment will propagate to all the mixes that use it:
 
 .. autosummary::

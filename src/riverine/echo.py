@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from abc import ABCMeta
 from decimal import Decimal
-from typing import TYPE_CHECKING, Literal, Sequence, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, Sequence, cast
 
 import attrs
 import polars as pl
@@ -101,17 +101,31 @@ def _parse_droplet_volume(value: str | DecimalQuantity) -> DecimalQuantity:
     return result
 
 
+@attrs.define(eq=False)
 class AbstractEchoAction(ActionWithComponents, metaclass=ABCMeta):
     """Abstract base class for Echo actions.
 
     ``rtol`` is a dimensionless relative tolerance and defaults to 1%.  It may
     be supplied as a fraction or percentage string.  ``atol`` defaults to zero
     and must use units appropriate to the concrete action's target: volume for
-    a fill and concentration for a concentration-targeting action.
+    a fill and concentration for a concentration-targeting action. ``stage``
+    gives an optional global ordering stage within a compiled Echo run.
+    ``new_echo_run=True`` starts a new run before the action when it follows an
+    Echo action in a mix whose ``execution_order`` is ``"listed"``.
     """
 
-    rtol: Decimal
-    atol: DecimalQuantity | None
+    rtol: ClassVar[Decimal]
+    atol: ClassVar[DecimalQuantity | None]
+    stage: int | None = attrs.field(
+        default=None,
+        kw_only=True,
+        validator=attrs.validators.optional(attrs.validators.instance_of(int)),
+    )
+    new_echo_run: bool = attrs.field(
+        default=False,
+        kw_only=True,
+        validator=attrs.validators.instance_of(bool),
+    )
 
     def _realized_mix_volume(
         self,

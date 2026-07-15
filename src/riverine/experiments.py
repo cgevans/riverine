@@ -19,8 +19,7 @@ import attrs
 
 from .dictstructure import _structure
 from .mixes import Mix, VolumeError
-from .units import NAN_VOL, Q_, DecimalQuantity, uL
-from .util import _get_picklist_class, gen_random_hash, maybe_cache_once
+from .units import Q_, DecimalQuantity, uL
 
 if TYPE_CHECKING:  # pragma: no cover
     from kithairon import PickList
@@ -28,6 +27,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from riverine.actions import AbstractAction
 
     from .components import AbstractComponent
+    from .execution import ExperimentPlan
     from .references import Reference
 
 
@@ -185,47 +185,51 @@ class Experiment:
     )
     locations: LocationDict = attrs.field(factory=dict, converter=LocationDict.from_obj)
 
+    def compile(self) -> ExperimentPlan:
+        """Compile material dependencies into manual steps and Echo runs."""
+        from .execution import compile_experiment
+
+        return compile_experiment(self)
+
+    def generate_picklists(self) -> tuple[PickList, ...]:
+        """Return the Echo picklists from :meth:`compile`, one per Echo run."""
+        return self.compile().echo_picklists
+
     def generate_picklist(self, _cache_key=None) -> PickList:
-        _cache_key = gen_random_hash() if _cache_key is None else _cache_key
-        PickList = _get_picklist_class()
+        """Return the sole compiled Echo picklist.
 
-        pls: list[PickList] = []
-        for c in self.components.values():
-            if hasattr(c, "generate_picklist"):
-                p = c.generate_picklist(self, _cache_key=_cache_key)
-                if p is not None:
-                    pls.append(p)
-        p = PickList.concat(pls)
+        Experiments requiring multiple physical Echo runs must use
+        :meth:`generate_picklists` (or inspect :meth:`compile`) so intervening
+        manual work cannot accidentally be skipped.
+        """
+        from .execution import ManualStep, empty_echo_picklist
 
-        # An experiment whose Echo actions are all no-ops still has a valid,
-        # typed empty picklist.  Avoid constructing an untyped empty topology
-        # dataframe, whose null join keys cannot be matched to picklist strings.
-        if p.data.is_empty():
-            return p
+        plan = self.compile()
+        echo_steps = plan.echo_steps
+        if not echo_steps:
+            return empty_echo_picklist()
+        if len(echo_steps) == 1:
+            return echo_steps[0].picklist
 
-        import networkx as nx
-        import polars as pl
-
-        g = p.well_transfer_multigraph()
-
-        a = list(enumerate(nx.topological_generations(g)))
-
-        topogen = sum(([x[0]] * len(x[1]) for x in a), [])
-        plate = [y[0] for x in a for y in x[1]]
-        well = [y[1] for x in a for y in x[1]]
-
-        tgl = pl.DataFrame({
-            'plate': plate,
-            'well': well,
-            'topogen': topogen
-        }).lazy()
-
-        return PickList(p.data.lazy().join(
-            tgl,
-            left_on=["Destination Plate Name", "Destination Well"],
-            right_on=["plate", "well"],
-            how="inner",
-        ).sort(by=["topogen", "Destination Plate Name", "Source Plate Name"]).drop('topogen').collect())
+        first_index = plan.steps.index(echo_steps[0])
+        second_index = plan.steps.index(echo_steps[1])
+        intervening = [
+            step
+            for step in plan.steps[first_index + 1 : second_index]
+            if isinstance(step, ManualStep)
+        ]
+        if intervening:
+            path = " -> ".join(
+                f'{step.id} (manual: {", ".join(mix.name for mix in step.target_mixes)})'
+                for step in intervening
+            )
+        else:
+            path = "an explicit new_echo_run boundary"
+        raise ValueError(
+            f"Experiment compilation requires {len(echo_steps)} Echo runs. "
+            f"The first two runs are separated by {path}. Use "
+            "generate_picklists() or compile().echo_picklists instead."
+        )
 
     def add(
         self,
@@ -300,6 +304,7 @@ class Experiment:
         fixed_concentration: str | DecimalQuantity | None = None,
         buffer_name: str = "Buffer",
         min_volume: DecimalQuantity | str = Q_("0.5", uL),
+        execution_order: Literal["dependencies", "listed"] = "dependencies",
         check_volumes: bool | None = None,
         apply_reference: bool = True,
         check_existing: bool | Literal["equal"] = "equal",
@@ -335,6 +340,7 @@ class Experiment:
                 test_tube_name=test_tube_name,
                 fixed_concentration=fixed_concentration,
                 min_volume=min_volume,
+                execution_order=execution_order,
                 **deprecated_kwargs,
             )
 

@@ -24,7 +24,7 @@ import pint
 from tabulate import TableFormat, tabulate
 import polars as pl
 
-from .echo import AbstractEchoAction, EchoFillToVolume
+from .echo import AbstractEchoAction
 
 from .actions import (
     AbstractAction,  # Fixme: should not need special cases
@@ -146,15 +146,35 @@ def _maybesequence_action(
     return [object_or_sequence]
 
 
+def _parse_execution_order(value: str) -> Literal["dependencies", "listed"]:
+    if value not in ("dependencies", "listed"):
+        raise ValueError(
+            "Mix.execution_order must be 'dependencies' or 'listed', "
+            f"not {value!r}."
+        )
+    return cast(Literal["dependencies", "listed"], value)
+
+
 
 @attrs.define(eq=False, init=False)
 class Mix(AbstractComponent):
     """Class denoting a Mix, a collection of source components mixed to
     some volume or concentration.
+
+    By default, ``execution_order="dependencies"`` treats actions as a recipe
+    whose independent work may be reordered by :meth:`Experiment.compile`.
+    Set ``execution_order="listed"`` when the action list is a physical
+    timeline that compilation must preserve.
     """
     __hash__ = object.__hash__
     actions: Sequence[AbstractAction] = attrs.field(
         converter=_maybesequence_action, on_setattr=attrs.setters.convert
+    )
+    execution_order: Literal["dependencies", "listed"] = attrs.field(
+        default="dependencies",
+        kw_only=True,
+        converter=_parse_execution_order,
+        on_setattr=attrs.setters.convert,
     )
     name: str = ""
     test_tube_name: str | None = attrs.field(kw_only=True, default=None)

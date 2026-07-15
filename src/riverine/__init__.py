@@ -15,6 +15,12 @@ from .actions import (
 from ._warnings import RiverineDeprecationWarning
 from .components import AbstractComponent, Component, Strand, StoredMix
 from .experiments import Experiment
+from .execution import (
+    EchoStep,
+    ExperimentCompileError,
+    ExperimentPlan,
+    ManualStep,
+)
 from .locations import WellPos
 from .mixes import Mix, MixLine, master_mix, split_mix
 from .quantitate import hydrate_and_measure_conc_and_dilute, measure_conc_and_dilute
@@ -39,6 +45,10 @@ __all__ = [
     "Strand",
     "StoredMix",
     "Experiment",
+    "ExperimentPlan",
+    "ExperimentCompileError",
+    "ManualStep",
+    "EchoStep",
     "FixedVolume",
     "FixedConcentration",
     "EqualConcentration",

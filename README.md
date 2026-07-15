@@ -31,6 +31,7 @@ components at different concentrations spread across several plates.
 
 ## Unreleased
 
+- Added `Experiment.compile()`, which turns manual and Echo material dependencies into a structured `ExperimentPlan` with ordered `ManualStep` and `EchoStep` objects, per-run picklists, dependency reasons, and Markdown rendering. `Mix(execution_order="listed")`, Echo `stage`, and `new_echo_run` provide opt-in physical ordering constraints; `generate_picklists()` returns all required Echo runs while `generate_picklist()` rejects multi-run protocols.
 - Renamed `FillToVolume` to `PipetteFillToVolume`; `FillToVolume` remains as an alias, and files serialized under the old name still load.
 - `FillToVolume`/`PipetteFillToVolume` and `EchoFillToVolume` now share a common `AbstractFillToVolume` base, so buffer detection (e.g. `Mix.buffer_name`) works for Echo fills as well.
 - A mix with more than one action determining its total volume now raises a clear error instead of recursing infinitely.
