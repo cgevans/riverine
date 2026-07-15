@@ -44,7 +44,36 @@ uM = ureg.Unit("uM")
 nM = ureg.Unit("nM")
 nmol = ureg.Unit("nmol")
 
+# A dimensionless "fold" concentration, written "x" (e.g. a 10x buffer).
+ureg.define("fold = [] = x")
+
+# Storage unit for a mass/volume concentration.
+_MASS_CONC_UNIT = ureg.Unit("g/L")
+
 DecimalQuantity: TypeAlias = Quantity # "PlainQuantity[Decimal]"
+
+
+def is_concentration(q: Quantity) -> bool:
+    """Whether `q` is a kind of concentration riverine tracks: a molarity, a
+    mass/volume, or a dimensionless fold (x)."""
+    return q.check(nM) or q.check(_MASS_CONC_UNIT) or q.dimensionless
+
+
+def concentrations_same_kind(a: Quantity, b: Quantity) -> bool:
+    """Whether two concentrations are the same kind (molarity, mass/volume, or
+    fold), and so can be compared or combined."""
+    return a.dimensionality == b.dimensionality
+
+
+def canonical_concentration_unit(q: Quantity) -> pint.Unit:
+    """The unit riverine stores `q`'s magnitude in, chosen by its kind."""
+    if q.check(nM):
+        return nM
+    if q.check(_MASS_CONC_UNIT):
+        return _MASS_CONC_UNIT
+    if q.dimensionless:
+        return ureg.Unit("x")
+    raise ValueError(f"{q} is not a concentration.")
 
 
 def Q_(
@@ -112,19 +141,28 @@ def _ratio(
     return (top / bottom).m_as("")
 
 
+_CONC_ERR = "should be a concentration (molarity, mass/volume, or fold/x)"
+
+
+def _compact_conc(v: Quantity) -> DecimalQuantity:
+    v = Q_(v.m, v.u)
+    if v.dimensionless:
+        return v
+    return cast(DecimalQuantity, v.to_compact())
+
+
 def _parse_conc_optional(v: str | Quantity | None) -> DecimalQuantity:
     """Parses a string or Quantity as a concentration; if None, returns a NaN
     concentration."""
     if isinstance(v, str):
         q = ureg.Quantity(v)
-        if not q.check(nM):
-            raise ValueError(f"{v} is not a valid quantity here (should be molarity).")
+        if not is_concentration(q):
+            raise ValueError(f"{v} is not a valid quantity here ({_CONC_ERR}).")
         return q
     elif isinstance(v, Quantity):
-        if not v.check(nM):
-            raise ValueError(f"{v} is not a valid quantity here (should be molarity).")
-        v = Q_(v.m, v.u)
-        return cast(DecimalQuantity, v.to_compact())
+        if not is_concentration(v):
+            raise ValueError(f"{v} is not a valid quantity here ({_CONC_ERR}).")
+        return _compact_conc(v)
     elif v is None:
         return NAN_CONC
     raise ValueError
@@ -135,15 +173,14 @@ def _parse_conc_required(v: str | Quantity) -> DecimalQuantity:
     it result in a value."""
     if isinstance(v, str):
         q = ureg.Quantity(v)
-        if not q.check(nM):
-            raise ValueError(f"{v} is not a valid quantity here (should be molarity).")
+        if not is_concentration(q):
+            raise ValueError(f"{v} is not a valid quantity here ({_CONC_ERR}).")
         return q
     elif isinstance(v, Quantity):
-        if not v.check(nM):
-            raise ValueError(f"{v} is not a valid quantity here (should be molarity).")
-        v = Q_(v.m, v.u)
-        return cast(DecimalQuantity, v.to_compact())
-    raise ValueError(f"{v} is not a valid quantity here (should be molarity).")
+        if not is_concentration(v):
+            raise ValueError(f"{v} is not a valid quantity here ({_CONC_ERR}).")
+        return _compact_conc(v)
+    raise ValueError(f"{v} is not a valid quantity here ({_CONC_ERR}).")
 
 
 def _parse_vol_optional(v: str | Quantity) -> DecimalQuantity:

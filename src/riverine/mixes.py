@@ -414,8 +414,10 @@ class Mix(AbstractComponent):
             return self.fixed_concentration
         elif isinstance(self.fixed_concentration, str):
             ac = self.all_components()
+            row = ac.loc[self.fixed_concentration]
+            unit = row["concentration_unit"]
             return ureg.Quantity(
-                Decimal(ac.loc[self.fixed_concentration, "concentration_nM"]), nM
+                Decimal(row["concentration_nM"]), unit if unit is not None else nM
             )
         elif self.fixed_concentration is None:
             return self.actions[0].dest_concentrations(
@@ -630,6 +632,7 @@ class Mix(AbstractComponent):
             .then(pl.lit(None))
             .otherwise(pl.col("concentration_nM").sum())
             .alias("concentration_nM").cast(pl.Decimal(scale=6)),
+            pl.col("concentration_unit").drop_nulls().first(),
             pl.col("component").first(),  # FIXME
         )
 

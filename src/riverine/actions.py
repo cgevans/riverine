@@ -39,6 +39,7 @@ from .units import (
     _parse_vol_optional,
     _parse_vol_required,
     _ratio,
+    concentrations_same_kind,
     nM,
     uL,
     ureg,
@@ -322,6 +323,15 @@ class ActionWithComponents(AbstractAction):
         ):
             comps: pl.DataFrame = comp.all_components_polars(_cache_key=_cache_key)
 
+            if (
+                not isnan(dc.m)
+                and not isnan(sc.m)
+                and not concentrations_same_kind(dc, sc)
+            ):
+                raise ValueError(
+                    f"Cannot set {comp.name} to {dc}: its source concentration "
+                    f"{sc} is a different kind of unit."
+                )
             r = _ratio(dc, sc)
             if math.isnan(r):
                 r = None
@@ -336,6 +346,7 @@ class ActionWithComponents(AbstractAction):
             .then(pl.lit(None))
             .otherwise(pl.col("concentration_nM").sum())
             .alias("concentration_nM"),
+            pl.col("concentration_unit").drop_nulls().first(),
             pl.col("component").first(),  # FIXME
         )
 
@@ -809,10 +820,18 @@ class FixedConcentration(ActionWithComponents):
         actions: Sequence[AbstractAction] = (),
         _cache_key=None,
     ) -> list[DecimalQuantity]:
+        source_concs = self._get_source_concentrations(_cache_key=_cache_key)
+        target = self.fixed_concentration
+        for comp, sc in zip(self.components, source_concs):
+            if not isnan(sc.m) and not concentrations_same_kind(target, sc):
+                raise ValueError(
+                    f"Cannot set {comp.name} to {target}: its source concentration "
+                    f"{sc} is a different kind of unit."
+                )
         ea_vols = compute_fixed_concentration_each(
             mix_volume,
-            self.fixed_concentration,
-            self._get_source_concentrations(_cache_key=_cache_key),
+            target,
+            source_concs,
         )
         if not math.isnan(self.min_volume.m):
             below_min = []
@@ -925,6 +944,7 @@ class ToConcentration(ActionWithComponents):
             cps, _ = cps.align(mcomp)
             cps.loc[:, "concentration_nM"] = cps.loc[:, "concentration_nM"].fillna(Decimal("0.0")) # type:  ignore
             cps.loc[mcomp.index, "concentration_nM"] += mcomp.concentration_nM
+            cps.loc[mcomp.index, "concentration_unit"] = mcomp.concentration_unit
             cps.loc[mcomp.index, "component"] = mcomp.component
 
         return cps
@@ -941,15 +961,18 @@ class ToConcentration(ActionWithComponents):
             _othercomps = self._othercomps(mix_vol, actions, _cache_key=_cache_key)
         else:
             _othercomps = None
-        if _othercomps is not None:
-            otherconcs = [
-                Q_(_othercomps.loc[comp.name, "concentration_nM"], nM)  # type: ignore
-                if comp.name in _othercomps.index
-                else ZERO_CONC
-                for comp in self.components
-            ]
-        else:
-            otherconcs = [ZERO_CONC for _ in self.components]
+        zero = Q_("0", self.fixed_concentration.units)
+
+        def _other_conc(comp: AbstractComponent) -> DecimalQuantity:
+            if _othercomps is None or comp.name not in _othercomps.index:
+                return zero
+            mag = _othercomps.loc[comp.name, "concentration_nM"]
+            unit = _othercomps.loc[comp.name, "concentration_unit"]
+            if mag is None or unit is None or (isinstance(unit, float) and isnan(unit)):
+                return zero
+            return Q_(mag, unit)
+
+        otherconcs = [_other_conc(comp) for comp in self.components]
         return compute_toconcentration_dest_concs(self.fixed_concentration, otherconcs)
 
     @maybe_cache_once

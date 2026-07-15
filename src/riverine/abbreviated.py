@@ -30,6 +30,7 @@ __all__ = (
     #   "µL",
     "uL",
     "mL",
+    "x",
     "ureg",
 )
 
@@ -50,3 +51,4 @@ nL = ureg.Unit("nL")
 µL = ureg.Unit("µL")
 uL = ureg.Unit("uL")
 mL = ureg.Unit("mL")
+x = ureg.Unit("x")

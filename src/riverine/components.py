@@ -18,6 +18,7 @@ from .units import (
     DecimalQuantity,
     _parse_conc_optional,
     _parse_vol_optional,
+    canonical_concentration_unit,
     nM,
     ureg,
     NAN_CONC
@@ -34,6 +35,19 @@ if TYPE_CHECKING:  # pragma: no cover
 T = TypeVar("T")
 
 __all__ = ["AbstractComponent", "Component", "Strand", "StoredMix"]
+
+
+def _conc_magnitude_unit(conc: DecimalQuantity) -> tuple[Any, str | None]:
+    """Return the stored magnitude and unit name for a concentration.
+
+    The magnitude is in the canonical unit for the concentration's kind
+    (see :func:`canonical_concentration_unit`).  A NaN concentration gives
+    ``(None, None)``.
+    """
+    if isnan(conc.m):
+        return None, None
+    unit = canonical_concentration_unit(conc)
+    return conc.m_as(unit), str(unit)
 
 
 class AbstractComponent(ABC):
@@ -179,18 +193,18 @@ class Component(AbstractComponent):
         return (self.plate, self.well)
 
     def all_components_polars(self, _cache_key=None) -> pl.DataFrame:
-        c = self.concentration.to(nM).magnitude
-        if isnan(c):
-            c = None
+        c, unit = _conc_magnitude_unit(self.concentration)
         comp_df = pl.DataFrame(
             {
                 'name': [self.name],
                 'concentration_nM': [c],
+                'concentration_unit': [unit],
                 'component': [self]
             },
             schema={
                 'name': pl.String,
                 'concentration_nM': pl.Decimal(scale=6),
+                'concentration_unit': pl.String,
                 'component': pl.Object
             }
         )
@@ -499,6 +513,7 @@ class StoredMix(AbstractComponent):
                 schema={
                     "name": pl.String,
                     "concentration_nM": pl.Decimal(scale=6),
+                    "concentration_unit": pl.String,
                     "component": pl.Object,
                 }
             )
@@ -559,8 +574,12 @@ class StoredMix(AbstractComponent):
         components and their concentrations as the stock contents."""
         contents: list[AbstractComponent] = []
         for nm, row in mix.all_components().iterrows():
-            conc_nM = row["concentration_nM"]
-            conc = NAN_CONC if conc_nM is None else Q_(conc_nM, nM)
+            conc_mag = row["concentration_nM"]
+            unit = row.get("concentration_unit")
+            if conc_mag is None or unit is None:
+                conc = NAN_CONC
+            else:
+                conc = Q_(conc_mag, unit)
             base = row["component"]
             if isinstance(base, Strand):
                 contents.append(
@@ -608,6 +627,7 @@ def _empty_components() -> pd.DataFrame:
         index=pd.Index([], name="name"),
     )
     cps["concentration_nM"] = pd.Series([], dtype=object)
+    cps["concentration_unit"] = pd.Series([], dtype=object)
     cps["component"] = pd.Series([], dtype=object)
     return cps
 
