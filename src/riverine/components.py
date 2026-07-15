@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Sequence, Tuple, TypeVar, cast
 
 import attrs
 import pandas as pd
+from pint.errors import PintError
 
 from .dictstructure import _STRUCTURE_CLASSES, _structure, _unstructure
 from .locations import WellPos, _parse_wellpos_optional
@@ -17,6 +18,7 @@ from .units import (
     ZERO_VOL,
     DecimalQuantity,
     _parse_conc_optional,
+    _parse_conc_required,
     _parse_vol_optional,
     canonical_concentration_unit,
     nM,
@@ -48,6 +50,35 @@ def _conc_magnitude_unit(conc: DecimalQuantity) -> tuple[Any, str | None]:
         return None, None
     unit = canonical_concentration_unit(conc)
     return conc.m_as(unit), str(unit)
+
+
+def _validate_concentration_units(df: pl.DataFrame) -> None:
+    """Reject named components whose concentrations use different kinds.
+
+    Concentration magnitudes are stored in one canonical unit per kind, so two
+    distinct non-null unit names for the same component cannot be summed.
+    """
+    units_by_name: dict[str, set[str]] = {}
+    for name, unit in (
+        df.select("name", "concentration_unit")
+        .filter(pl.col("concentration_unit").is_not_null())
+        .unique()
+        .iter_rows()
+    ):
+        units_by_name.setdefault(name, set()).add(unit)
+
+    conflicts = {
+        name: units for name, units in units_by_name.items() if len(units) > 1
+    }
+    if conflicts:
+        details = "; ".join(
+            f"{name}: {', '.join(sorted(units))}"
+            for name, units in sorted(conflicts.items())
+        )
+        raise ValueError(
+            "Cannot combine concentrations of different kinds for the same "
+            f"component ({details})."
+        )
 
 
 class AbstractComponent(ABC):
@@ -590,6 +621,7 @@ class StoredMix(AbstractComponent):
         return cls(
             name if name is not None else mix.name,
             contents,
+            fixed_concentration=mix.concentration,
             plate=plate,
             well=well,
             volume=volume if volume is not None else NAN_VOL,
@@ -619,6 +651,18 @@ class StoredMix(AbstractComponent):
             if k in ("contents", "name"):
                 continue
             d[k] = _structure(d[k], experiment)
+        fixed_concentration = d.get("fixed_concentration")
+        content_names = {c.name for c in d["contents"]}
+        if (
+            isinstance(fixed_concentration, str)
+            and fixed_concentration not in content_names
+        ):
+            try:
+                d["fixed_concentration"] = _parse_conc_required(fixed_concentration)
+            except (PintError, ValueError):
+                # A non-quantity string is still a content selector.  Leave it
+                # unchanged so _get_concentration can report an unknown name.
+                pass
         return cls(**d)
 
 

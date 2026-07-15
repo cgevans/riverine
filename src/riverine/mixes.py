@@ -36,7 +36,11 @@ from .actions import (
     FillToVolume,
 )
 from ._warnings import _warn_deprecated
-from .components import AbstractComponent, Component
+from .components import (
+    AbstractComponent,
+    Component,
+    _validate_concentration_units,
+)
 from .dictstructure import _STRUCTURE_CLASSES, _structure, _unstructure
 from .locations import PlateType, WellPos, _parse_wellpos_optional
 from .logging import log
@@ -626,6 +630,7 @@ class Mix(AbstractComponent):
                 action.all_components_polars(self._get_total_volume(_cache_key=_cache_key), self.actions, _cache_key=_cache_key)
             )
         df = pl.concat(all_comps)
+        _validate_concentration_units(df)
 
         return df.group_by("name").agg(
             pl.when(pl.col("concentration_nM").is_null().any())

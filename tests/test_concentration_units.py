@@ -7,11 +7,12 @@ from riverine import (
     Component,
     FillToVolume,
     FixedConcentration,
+    FixedVolume,
     Mix,
     Q_,
     Strand,
     StoredMix,
-    nM,
+    ToConcentration,
 )
 from riverine.abbreviated import uM, x
 from riverine.units import (
@@ -88,6 +89,41 @@ def test_fixed_concentration_kind_mismatch_errors():
         name="bad",
     )
     with pytest.raises(ValueError, match="different kind of unit"):
+        mix.all_components()
+
+
+def test_toconcentration_kind_mismatch_errors_when_rendering():
+    mix = Mix(
+        [
+            ToConcentration(Component("X", "10 x"), "5 g/L"),
+            FillToVolume("Buffer", "100 uL"),
+        ],
+        name="bad",
+    )
+    with pytest.raises(ValueError, match="different kind of unit"):
+        mix.table()
+
+
+def test_duplicate_component_kinds_across_actions_error():
+    mix = Mix(
+        [
+            FixedVolume(Component("X", "10 x"), "1 uL"),
+            FixedVolume(Component("X", "2 g/L"), "1 uL"),
+        ],
+        name="bad",
+    )
+    with pytest.raises(ValueError, match="different kinds"):
+        mix.all_components()
+
+
+def test_duplicate_component_kinds_within_stored_mix_error():
+    stock = StoredMix(
+        "stock",
+        [Component("X", "10 x"), Component("X", "2 g/L")],
+        fixed_concentration=Q_(10, x),
+    )
+    mix = Mix([FixedVolume(stock, "1 uL")], name="bad")
+    with pytest.raises(ValueError, match="different kinds"):
         mix.all_components()
 
 

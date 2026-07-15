@@ -94,6 +94,21 @@ def test_from_mix_captures_contents():
         assert_close(Q_(ac.loc[f"S{i}", "concentration_nM"], nM), Q_(10, uM))
 
 
+def test_from_mix_preserves_effective_concentration():
+    premade = Mix(
+        [
+            FixedVolume(Component("A", "10 uM"), "1 uL"),
+            FixedVolume(Component("B", "40 uM"), "1 uL"),
+        ],
+        name="premade_mix",
+        fixed_concentration="B",
+    )
+
+    stocks = [StoredMix.from_mix(premade) for _ in range(10)]
+    for stock in stocks:
+        assert_close(stock.concentration, premade.concentration)
+
+
 def test_volume_consumed_from_stock_not_contents():
     stock = StoredMix("S1_stock", {"S1": "200 uM"}, volume="20 uL")
     mix = Mix(
@@ -124,3 +139,15 @@ def test_stored_mix_roundtrip():
     d = json.loads(json.dumps(stock._unstructure()))
     back = _structure(d)
     assert back == stock
+
+
+def test_stored_mix_quantity_fixed_concentration_roundtrip():
+    stock = StoredMix(
+        "premade",
+        {"S1": "200 uM"},
+        fixed_concentration=Q_(90, uM),
+    )
+    d = json.loads(json.dumps(stock._unstructure()))
+    back = _structure(d)
+    assert back == stock
+    assert_close(back.concentration, Q_(90, uM))

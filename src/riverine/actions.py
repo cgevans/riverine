@@ -9,7 +9,12 @@ from warnings import warn
 import attrs
 import pandas as pd
 
-from .components import AbstractComponent, _empty_components, _maybesequence_comps
+from .components import (
+    AbstractComponent,
+    _empty_components,
+    _maybesequence_comps,
+    _validate_concentration_units,
+)
 from .dictstructure import _STRUCTURE_CLASSES, _structure, _unstructure
 from .locations import WellPos, mixgaps
 from .printing import MixLine, TableFormat
@@ -340,6 +345,7 @@ class ActionWithComponents(AbstractAction):
             all_comps.append(comps)
 
         newdf: pl.DataFrame = pl.concat(all_comps)
+        _validate_concentration_units(newdf)
 
         newdf = newdf.group_by("name").agg(
             pl.when(pl.col("concentration_nM").is_null().any())
@@ -983,11 +989,25 @@ class ToConcentration(ActionWithComponents):
         _cache_key=None,
     ) -> list[DecimalQuantity]:
         _cache_key = gen_random_hash() if _cache_key is None else _cache_key
+        dest_concs = self.dest_concentrations(
+            mix_volume, actions, _cache_key=_cache_key
+        )
+        source_concs = self._get_source_concentrations(_cache_key=_cache_key)
+        for comp, dc, sc in zip(self.components, dest_concs, source_concs):
+            if (
+                not isnan(dc.m)
+                and not isnan(sc.m)
+                and not concentrations_same_kind(dc, sc)
+            ):
+                raise ValueError(
+                    f"Cannot set {comp.name} to {dc}: its source concentration "
+                    f"{sc} is a different kind of unit."
+                )
         ea_vols = [
             mix_volume * r
             for r in _ratio(
-                self.dest_concentrations(mix_volume, actions, _cache_key=_cache_key),
-                self.source_concentrations,
+                dest_concs,
+                source_concs,
             )
         ]
         if not math.isnan(self.min_volume.m):
